@@ -1,5 +1,5 @@
 {
-  "name": "redux-my-d3",
+  "name": "tinier",
   "version": "0.1.0",
   "description": "Simple views and bindings to redux, with d3.js in mind",
   "repository": {
@@ -11,12 +11,24 @@
   "bugs": {
     "url": "https://github.com/zakandrewking/redux-my-d3/issues"
   },
+  "scripts": {
+    "test": "./node_modules/karma/bin/karma start"
+  },
   "homepage": "https://github.com/zakandrewking/redux-my-d3#readme",
   "devDependencies": {
     "babel-core": "^6.4.0",
     "babel-loader": "^6.2.1",
     "babel-plugin-transform-object-rest-spread": "^6.3.13",
     "babel-preset-es2015": "^6.3.13",
+    "chai": "^3.4.1",
+    "karma": "^0.13.19",
+    "karma-chai-plugins": "^0.6.1",
+    "karma-chrome-launcher": "^0.2.2",
+    "karma-cli": "^0.1.2",
+    "karma-mocha": "^0.2.1",
+    "karma-sourcemap-loader": "^0.3.6",
+    "karma-webpack": "^1.7.0",
+    "mocha": "^2.3.4",
     "webpack": "^1.12.10",
     "webpack-dev-server": "^1.14.0"
   },
@@ -24,7 +36,6 @@
     "d3": "^3.5.12",
     "lodash.isplainobject": "^3.2.0",
     "lodash.mapvalues": "^3.0.1",
-    "lodash.zip": "^3.1.0",
     "redux": "^3.0.5",
     "redux-logger": "^2.3.1"
   }

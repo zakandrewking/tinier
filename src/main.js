@@ -1,10 +1,16 @@
 /** redux-my-d3 test */
 
-import { createClass, createReducer, objectOf, arrayOf } from './red3';
+import { createClass, createReducer, objectOf, arrayOf } from './tinier';
 import { TodoList } from './TodoList';
 import { Todo } from './Todo';
 import { Subtask } from './Subtask';
 import { AddButton } from './AddButton';
+
+import { applyMiddleware, createStore } from 'redux';
+import createLogger from 'redux-logger';
+const logger = createLogger();
+const createStoreWithMiddleware = applyMiddleware(logger)(createStore);
+
 
 const app = TodoList('main', {
     todos: objectOf(Todo('todos', {
@@ -21,6 +27,6 @@ const actions = app.run(document.body, {
             subtasks: ['a', 'b']
         }
     }
-});
+}, createStoreWithMiddleware);
 
 actions.ADD_TODO({ text: 'new' });

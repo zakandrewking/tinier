@@ -1,5 +1,5 @@
 import * as d3 from 'd3';
-import { createClass, createReducer } from './red3';
+import { createClass, createReducer } from './tinier';
 import { CHANGE_SUBTASK_TEXT } from './actionTypes';
 
 export const emptySubtask = { text: '' };

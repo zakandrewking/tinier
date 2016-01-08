@@ -1,7 +1,7 @@
 'use strict';
 
 import * as d3 from 'd3'
-import { createClass, createReducer } from './red3'
+import { createClass, createReducer } from './tinier'
 import { CHANGE_TASK_TEXT, MARK_COMPLETED, ADD_SUBTASK } from './actionTypes'
 
 export const empty_todo = {
@@ -36,8 +36,15 @@ export const Todo = createClass({
         sel.append('span').attr('class', 'text')
     },
     update: (localState, appState, el) => {
-        const sel = d3.select(el)
-        sel.select('.check').text(state.completed ? '✓' : '✗')
-        sel.select('.text').text(state.text)
+        const sel = d3.select(el);
+        sel.select('.check').text(state.completed ? '✓' : '✗');
+        sel.select('.text').text(state.text);
+        const subtask_sel = sel.select('.subtasks');
+        // bind data
+        const sels = subtask_sel.selectAll('.subtask')
+                                .data(localState.subtasks);
+        return {
+            subtasks: sels.each(function() { return this.node; })
+        };
     }
 })
