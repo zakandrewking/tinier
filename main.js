@@ -6,14 +6,14 @@ import { Todo } from './Todo';
 import { Subtask } from './Subtask';
 import { AddButton } from './AddButton';
 
-const app = TodoList({
-    todos: objectOf(Todo({
-        subtasks: arrayOf(Subtask())
+const app = TodoList('main', {
+    todos: objectOf(Todo('todos', {
+        subtasks: arrayOf(Subtask('subtasks'))
     })),
-    add: AddButton
+    add: AddButton('addButton')
 });
 
-app.run(document.body, {
+const actions = app.run(document.body, {
     todos: {
         123: {
             text: 'foobar',
@@ -22,3 +22,5 @@ app.run(document.body, {
         }
     }
 });
+
+actions.ADD_TODO({ text: 'new' });

@@ -1,6 +1,17 @@
 import * as d3 from 'd3';
 import { createClass, createReducer } from './red3';
+import { ADD_TODO } from './actionTypes';
 
-const AddButton = createClass({
-    reducer: createReducer({ text: '+' }, {})
+export const emptyAddButton = {};
+
+export const AddButton = createClass({
+    actionCreators: {
+        [ADD_TODO]: data => ({ type: ADD_TODO, text: data.text || '' })
+    },
+    create: (localState, appState, el, actions) => {
+        d3.select(el).append('span').text('+')
+          .on('click', function() {
+              actions[ADD_TODO]();
+          });
+    }
 });

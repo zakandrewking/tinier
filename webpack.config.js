@@ -15,7 +15,10 @@ module.exports = {
                 loader: 'babel',
                 test: /\.js$/,
                 exclude: /(node_modules|bower_components)/,
-                query: { presets: ['es2015'] }
+                query: {
+                    presets: ['es2015'],
+                    plugins: ['transform-object-rest-spread']
+                }
             }
         ]
     }
