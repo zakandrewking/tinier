@@ -3,16 +3,15 @@
 import * as d3 from 'd3';
 import { createClass, createReducer } from './tinier';
 import { ADD_TODO } from './actionTypes';
-import { toArray, newId } from './utils';
 import { empty_todo } from './Todo';
 
-function newId(obj) {
+function newId (obj) {
     /** Return a key by incrementing the largest integer key in the object. */
     // map(parseInt) does not work
     return Math.max.apply(null, Object.keys(obj).map(x => parseInt(x))) + 1;
 }
 
-function toArray(obj) {
+function toArray (obj) {
     /** Convert object of objects to array of objects, and add original keys
        with the 'id' attribute in the inner objects. */
     return Object.keys(obj).map(key => ({...obj[key], id: key }));

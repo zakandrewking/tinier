@@ -12,7 +12,8 @@
     "url": "https://github.com/zakandrewking/redux-my-d3/issues"
   },
   "scripts": {
-    "test": "./node_modules/karma/bin/karma start"
+    "test": "./node_modules/karma/bin/karma start",
+    "test-i": "./node_modules/karma/bin/karma start --no-single-run"
   },
   "homepage": "https://github.com/zakandrewking/redux-my-d3#readme",
   "devDependencies": {
@@ -34,8 +35,10 @@
   },
   "dependencies": {
     "d3": "^3.5.12",
+    "lodash.flowright": "^3.2.1",
     "lodash.isplainobject": "^3.2.0",
     "lodash.mapvalues": "^3.0.1",
+    "lodash.zip": "^3.1.0",
     "redux": "^3.0.5",
     "redux-logger": "^2.3.1"
   }
