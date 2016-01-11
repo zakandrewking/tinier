@@ -19,7 +19,7 @@ const app = TodoList('main', {
     add: AddButton('addButton')
 });
 
-const actions = app.run(document.body, {
+const api = app.run(document.body, {
     todos: {
         123: {
             text: 'foobar',
@@ -29,4 +29,4 @@ const actions = app.run(document.body, {
     }
 }, createStoreWithMiddleware);
 
-actions.ADD_TODO({ text: 'new' });
+api.addTodo({ text: 'new' });

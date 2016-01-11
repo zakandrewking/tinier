@@ -6,7 +6,9 @@ export const emptyAddButton = {};
 
 export const AddButton = createClass({
     actionCreators: {
-        [ADD_TODO]: data => ({ type: ADD_TODO, text: data.text || '' })
+        [ADD_TODO]: data => {
+            return { type: ADD_TODO, text: data.text || '' };
+        }
     },
     create: (localState, appState, el, actions) => {
         d3.select(el).append('span').text('+')
