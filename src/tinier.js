@@ -7,9 +7,10 @@ import isPlainObject from 'lodash.isplainobject'
 import compose from 'lodash.flowright'
 import zip from 'lodash.zip'
 import get from 'lodash.get'
-// TODO LEFT OFF replace || null with get()
 import { createStore } from 'redux'
 import { zipFillNull } from './utils'
+
+const UPDATE_STATE = 'updateState'
 
 const ARRAY_OF = 'ARRAY_OF'
 const OBJECT_OF = 'OBJECT_OF'
@@ -31,7 +32,7 @@ function mapState (state, content, fn) {
 
      content: The content corresponding to this state.
 
-     fn: The callback with arguments: (view, localState)
+     fn: The callback with arguments: (view, localState, key)
 
    */
 
@@ -43,10 +44,10 @@ function mapState (state, content, fn) {
       throw Error('Content shape does not match state shape: ' + content +
                   ' <-> Array ' + state)
     } else if (isView(content)) {
-      return fn(content, state)
+      return fn(content, state, null)
     } else if (isArrayOf(content)) {
       // Array with view.
-      return state.map(s => fn(content[1], s))
+      return state.map((s, i) => fn(content[1], s, i))
     } else {
       // Ordinary array.
       return zipFillNull(state, content).map((s, c) => mapState(s, c, fn))
@@ -59,10 +60,10 @@ function mapState (state, content, fn) {
       throw Error('Content shape does not match state shape: ' + content +
                   ' <-> Object ' + state)
     } else if (isView(content)) {
-      return fn(content, state)
+      return fn(content, state, null)
     } else if (isObjectOf(content)) {
       // Object with view.
-      return mapValues(state, s => fn(content[1], s))
+      return mapValues(state, (s, k) => fn(content[1], s, k))
     } else {
       // Ordinary object
       const out = {}
@@ -89,9 +90,12 @@ function combineReducers (reducer, content) {
   return (state, action) => {
     const newState = reducer(state, action)
     const oldState = newState === state ? null : state
-    return mapState(newState, content, (view, localState) => {
+    return mapState(newState, content, (view, localState, key) => {
       // Mutually recursive: view.combinedReducer will call mapState again.
-      return view.combinedReducer(localState, action)
+      if ('key' in action && action.key !== key)
+        return localState
+      else
+        return view.combinedReducer(localState, action, key)
     })
   }
 }
@@ -140,10 +144,10 @@ function walkContentAndDiff (content, newState, oldState) {
     const view = content[1]
     const isValid = (obj, k) => isPlainObject(obj) && k in obj && obj[k] !== null
     const l = Object.assign({}, newState || {}, oldState || {})
-    view.needsCreate  = mapValues(l, (_, k) =>  isValid(newState) &&  !isValid(oldState))
-    view.needsUpdate  = mapValues(l, (_, k) =>  isValid(newState) && (!isValid(oldState) || newState[k] !== oldState[k]))
-    view.needsDestroy = mapValues(l, (_, k) => !isValid(newState) &&   isValid(oldState))
-    mapValues(l, (_, k) => walkContentAndDiff(view.content, newState[k] || null, oldState[k] || null))
+    view.needsCreate  = mapValues(l, (_, k) =>  isValid(newState, k) &&  !isValid(oldState, k))
+    view.needsUpdate  = mapValues(l, (_, k) =>  isValid(newState, k) && (!isValid(oldState, k) || newState[k] !== oldState[k]))
+    view.needsDestroy = mapValues(l, (_, k) => !isValid(newState, k) &&   isValid(oldState, k))
+    mapValues(l, (_, k) => walkContentAndDiff(view.content, get(newState, k, null), get(oldState, k, null)))
   } else if (content[0] === ARRAY_OF) {
     const view = content[1]
     const isValid = (obj, i) => Array.isArray(obj) && i < obj.length && obj[i] !== null
@@ -153,7 +157,7 @@ function walkContentAndDiff (content, newState, oldState) {
     view.needsCreate  = l.map((_, i) =>  isValid(newState, i) &&  !isValid(oldState, i))
     view.needsUpdate  = l.map((_, i) =>  isValid(newState, i) && (!isValid(oldState, i) || newState[i] !== oldState[i]))
     view.needsDestroy = l.map((_, i) => !isValid(newState, i) &&   isValid(oldState, i))
-    l.map((_, i) => walkContentAndDiff(view.content, newState[i] || null, oldState[i] || null))
+    l.map((_, i) => walkContentAndDiff(view.content, get(newState, i, null), get(oldState, i, null)))
   } else if (content.isView) {
     const view = content
     const isValid = obj => obj !== null
@@ -162,9 +166,9 @@ function walkContentAndDiff (content, newState, oldState) {
     view.needsDestroy = !isValid(newState) &&   isValid(oldState)
     walkContentAndDiff(view.content, newState || null, oldState || null)
   } else if (Array.isArray(content)) {
-    content.map(       (v, i) => walkContentAndDiff(v, newState[i] || null, oldState[i] || null))
+    content.map(       (v, i) => walkContentAndDiff(v, get(newState, i, null), get(oldState, i, null)))
   } else if (isPlainObject(content)) {
-    mapValues(content, (v, k) => walkContentAndDiff(v, newState[k] || null, oldState[k] || null))
+    mapValues(content, (v, k) => walkContentAndDiff(v, get(newState, k, null), get(oldState, k, null)))
   }
 }
 
@@ -175,24 +179,25 @@ function applyDiffToContent (content, newState, oldState) {
   // TODO rewrite this to return the needs* functions and keep the whole concept
   // functionally pure. This will probably require making run() a top-level
   // function (and will also let us this hack).
+  // TODO
   walkContentAndDiff(content, newState, oldState)
 }
 
 // 4. Update views by walking content
 
-function updateEl (view, binding, state, data,
+function updateEl (view, binding, state, data, key,
                    needsCreate, needsUpdate, needsDestroy) {
   /** Mutually recursive with walkContentAndUpdate */
   const { appState, parentBindings, actions } = data
   if (needsCreate)
-    view.create(state, appState, binding, actions)
+    view.create(state, appState, binding, actions, key)
   if (needsUpdate) {
-    const newBindings = view.update(state, appState, binding, actions)
+    const newBindings = view.update(state, appState, binding, actions, key)
     walkContentAndUpdate(view.content, state,
                          Object.assign({}, data, { parentBindings: newBindings }))
   }
   if (needsDestroy)
-    view.destroy(state, appState, binding, actions)
+    view.destroy(state, appState, binding, actions, key)
 }
 
 function walkContentAndUpdate (content, state, data) {
@@ -202,7 +207,7 @@ function walkContentAndUpdate (content, state, data) {
     const bindings = checkBindings(data.parentBindings, view.bindKey, state)
     // needs* might have more keys than bindings and state
     mapValues(view.needsUpdate, (_, k) => {
-      return updateEl(view, bindings[k] || null, state[k] || null, data,
+      return updateEl(view, get(bindings, k, null), get(state, k, null), data, k,
                       view.needsCreate[k], view.needsUpdate[k], view.needsDestroy[k])
     })
   } else if (content[0] === ARRAY_OF) {
@@ -210,24 +215,24 @@ function walkContentAndUpdate (content, state, data) {
     const bindings = checkBindings(data.parentBindings, view.bindKey, state)
     // needs* might be longer than bindings and state
     view.needsUpdate.map((_, i) => {
-      return updateEl(view, bindings[i] || null, state[i] || null, data,
+      return updateEl(view, get(bindings, i, null), get(state, i, null), data, i,
                       view.needsCreate[i], view.needsUpdate[i], view.needsDestroy[i])
     })
   } else if (content.isView) {
     const view = content
     const binding = checkBindings(data.parentBindings, view.bindKey, state)
-    updateEl(view, binding, state, data,
+    updateEl(view, binding, state, data, null,
              view.needsCreate, view.needsUpdate, view.needsDestroy)
   } else if (Array.isArray(content)) {
-    content.map(       (v, i) => walkContentAndUpdate(v, state[i] || null, data))
+    content.map(       (v, i) => walkContentAndUpdate(v, get(state, i, null), data))
   } else if (isPlainObject(content)) {
-    mapValues(content, (v, k) => walkContentAndUpdate(v, state[k] || null, data))
+    mapValues(content, (v, k) => walkContentAndUpdate(v, get(state, k, null), data))
   }
 }
 
-function updateContent (content, state, { appState, parentBindings }) {
+function updateContent (content, state, data) {
   /** updateContent -  */
-  walkContentAndUpdate(content, state, { appState, parentBindings });
+  walkContentAndUpdate(content, state, data);
 }
 
 function checkBindings (parentBindings, bindKey, state) {
@@ -242,11 +247,8 @@ function checkBindings (parentBindings, bindKey, state) {
       throw Error('Bindings for key ' + bindKey + ' have length ' +
                   bindings.length + ' but state array has length ' +
                   state.length)
-  } else if (isPlainObject(state)) {
-    if (!isPlainObject(bindings))
-      throw Error('Bindings for key ' + bindKey + ' are not an object: ' +
-                  bindings)
-    const missingKeys = Object.keys(bindings).map(k => k in state)
+  } else if (isPlainObject(state) && isPlainObject(bindings)) {
+    const missingKeys = Object.keys(state).filter(k => !(k in bindings))
     if (missingKeys.length > 0)
       throw Error('Bindings for key ' + bindKey + ' are missing keys ' +
                   missingKeys)
@@ -254,7 +256,7 @@ function checkBindings (parentBindings, bindKey, state) {
   return bindings
 }
 
-function withDispatch (actionCreators, dispatch) {
+function withDispatchAndKeyCheck (actionCreators, dispatch) {
   /** Apply the dispatch function through function composition with the action
    creators.
 
@@ -263,13 +265,19 @@ function withDispatch (actionCreators, dispatch) {
    dispatch: A dispatch function.
 
    */
-  // TODO how can these return vaules as api functions
-  return mapValues(actionCreators, actionCreator => {
-    return compose(dispatch, actionCreator)
-  })
+  // TODO how can these return vaules as API functions
+  return mapValues(actionCreators,
+                   actionCreator => compose(dispatch, actionCreator))
 }
 
-export function createClass ({ reducer, actionCreators, create, update, destroy }) {
+const defaultReducer = state => state
+const emptyFunction = () => undefined
+
+export function createClass ({ reducer        = defaultReducer,
+                               actionCreators = {},
+                               create         = emptyFunction,
+                               update         = emptyFunction,
+                               destroy        = emptyFunction }) {
   return (bindKey, content = {}) => {
     // TODO move this call into run() at ** so combineReducers only needs to be
     // called once and mapState can be an ordinary recursive function (not
@@ -283,31 +291,43 @@ export function createClass ({ reducer, actionCreators, create, update, destroy 
         // Modify the top-level reducer to calculate the state diff and update
         // the view views with details.
         const combinedReducerWithDiff = (state, action) => { // **
-          const newState = combinedReducer(state, action)
+          // TODO better solution
+          const newState = (action.type === UPDATE_STATE) ? action.data : combinedReducer(state, action)
           applyDiffToContent(content, newState, state)
           return newState
         }
         // Create the store
-        const store = createStore(combinedReducerWithDiff, hot_state)
+        const store = createStore(combinedReducerWithDiff)
+        // add an action for state update (TODO better solution)
+        const stateUpdateCreator = state => ({ type: UPDATE_STATE, data: state })
         // Collect the action creators and apply dispatch
-        const actions = withDispatch(collectActionCreators(actionCreators, content),
-                                     store.dispatch)
+        const actions = withDispatchAndKeyCheck(
+          collectActionCreators(
+            Object.assign({}, actionCreators, { [UPDATE_STATE]: stateUpdateCreator}),
+            content
+          ),
+          store.dispatch
+        )
         // Subscribe to changes
         const appUpdate = () => {
           /** Update function calls walkContent and walkFn recursively to find
              nodes that need updates and update them. */
           const appState = store.getState()
           if (appNeedsUpdate) {
-            const parentBindings = update(appState, appState, appEl, actions)
-            updateContent(content, appState, { appState, parentBindings })
+            const parentBindings = update(appState, appState, appEl, actions, null)
+            updateContent(content, appState, { appState, parentBindings, actions })
           }
         }
         store.subscribe(appUpdate)
 
         // first update
         const state = store.getState()
-        create(state, state, appEl, actions)
+        create(state, state, appEl, actions, null)
         appUpdate()
+
+        // apply a state
+        if (hot_state)
+          actions[UPDATE_STATE](hot_state)
 
         // return actions as API
         return actions
@@ -315,6 +335,9 @@ export function createClass ({ reducer, actionCreators, create, update, destroy 
       combinedReducer,
       actionCreators,
       content,
+      create,
+      update,
+      destroy,
       // TODO make bindKey optional if the shape of the bindings object is the
       // same as the shape of the parent content object.
       // TODO allow a function for bindKey.
@@ -328,9 +351,9 @@ export function createClass ({ reducer, actionCreators, create, update, destroy 
 }
 
 export function createReducer(initialState, handlers) {
-  return function reducer(state = initialState, action) {
+  return function reducer(state = initialState, action, key) {
     if (handlers.hasOwnProperty(action.type)) {
-      return handlers[action.type](state, action)
+      return handlers[action.type](state, action, key)
     } else {
       return state
     }

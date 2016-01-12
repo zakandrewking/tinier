@@ -13,20 +13,21 @@ const createStoreWithMiddleware = applyMiddleware(logger)(createStore);
 
 
 const app = TodoList('main', {
-    todos: objectOf(Todo('todos', {
-        subtasks: arrayOf(Subtask('subtasks'))
-    })),
-    add: AddButton('addButton')
+  todos: objectOf(Todo('todos', {
+    subtasks: arrayOf(Subtask('subtasks'))
+  })),
+  add: AddButton('addButton')
 });
 
 const api = app.run(document.body, {
-    todos: {
-        123: {
-            text: 'foobar',
-            completed: false,
-            subtasks: ['a', 'b']
-        }
+  todos: {
+    123: {
+      text: 'foobar',
+      completed: false,
+      subtasks: ['a', 'b']
     }
+  },
+  add: {}
 }, createStoreWithMiddleware);
 
 api.addTodo({ text: 'new' });
