@@ -15,7 +15,8 @@
   },
   "scripts": {
     "test": "./node_modules/mocha/bin/mocha --compilers js:babel-register src/tests/*.js",
-    "compile": "./node_modules/babel-cli/bin/babel.js -d lib/ --ignore tests/* src/",
+    "compile": "./node_modules/babel-cli/bin/babel.js -d lib/ --ignore tests/* -s true src/",
+    "compilew": "./node_modules/babel-cli/bin/babel.js -d lib/ --ignore tests/* -w -s true src/",
     "bundle": "./node_modules/webpack/bin/webpack.js"
   },
   "homepage": "https://github.com/zakandrewking/tinier#readme",
