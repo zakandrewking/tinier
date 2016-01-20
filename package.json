@@ -1,8 +1,9 @@
 {
   "name": "tinier",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "description": "Simple views and bindings to redux, with d3.js in mind",
   "main": "lib/main.js",
+  "files": ["lib/"],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/zakandrewking/tinier.git"
