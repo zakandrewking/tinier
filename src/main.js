@@ -48,9 +48,12 @@ function mapState (state, content, fn) {
     } else if (isArrayOf(content)) {
       // Array with view.
       return state.map((s, i) => fn(content[1], s, i))
-    } else {
-      // Ordinary array.
+    } else if (Array.isArray(content)) {
+      // content array.
       return zipFillNull(state, content).map((s, c) => mapState(s, c, fn))
+    } else {
+      // no content
+      return state
     }
   } else if (isPlainObject(state)) {
     // state { 'id1': {}, 'id2': 'x' }  content [OBJECT_OF, Todo]
@@ -64,7 +67,7 @@ function mapState (state, content, fn) {
     } else if (isObjectOf(content)) {
       // Object with view.
       return mapValues(state, (s, k) => fn(content[1], s, k))
-    } else {
+    } else if (isPlainObject(content)) {
       // Ordinary object
       const out = {}
       Object.keys(state).map(k => {
@@ -72,6 +75,8 @@ function mapState (state, content, fn) {
         out[k] = mapState(state[k], contentValue, fn)
       })
       return out
+    } else {
+      return state
     }
   } else {
     return state
@@ -238,19 +243,19 @@ function updateContent (content, state, data) {
 function checkBindings (parentBindings, bindKey, state) {
   const bindings = parentBindings[bindKey]
   if (typeof bindings === 'undefined') {
-    throw Error('No bindings for key ' + bindKey)
+    throw Error('No bindings for key "' + bindKey + '"')
   } else if (Array.isArray(state)) {
     if (!Array.isArray(bindings))
-      throw Error('Bindings for key ' + bindKey + ' are not an array: ' +
+      throw Error('Bindings for key "' + bindKey + '" are not an array: ' +
                   bindings)
     if (bindings.length !== state.length)
-      throw Error('Bindings for key ' + bindKey + ' have length ' +
+      throw Error('Bindings for key "' + bindKey + '" have length ' +
                   bindings.length + ' but state array has length ' +
                   state.length)
   } else if (isPlainObject(state) && isPlainObject(bindings)) {
     const missingKeys = Object.keys(state).filter(k => !(k in bindings))
     if (missingKeys.length > 0)
-      throw Error('Bindings for key ' + bindKey + ' are missing keys ' +
+      throw Error('Bindings for key "' + bindKey + '" are missing keys ' +
                   missingKeys)
   }
   return bindings
@@ -265,7 +270,7 @@ function withDispatchAndKeyCheck (actionCreators, dispatch) {
    dispatch: A dispatch function.
 
    */
-  // TODO how can these return vaules as API functions
+  // TODO how can these return values as API functions
   return mapValues(actionCreators,
                    actionCreator => compose(dispatch, actionCreator))
 }
@@ -292,18 +297,18 @@ export function createClass ({ reducer        = defaultReducer,
         // the view views with details.
         const combinedReducerWithDiff = (state, action) => { // **
           // TODO better solution
-          const newState = (action.type === UPDATE_STATE) ? action.data : combinedReducer(state, action)
+          const newState = (action.type === UPDATE_STATE) ? action.state : combinedReducer(state, action)
           applyDiffToContent(content, newState, state)
           return newState
         }
         // Create the store
         const store = createStore(combinedReducerWithDiff)
         // add an action for state update (TODO better solution)
-        const stateUpdateCreator = state => ({ type: UPDATE_STATE, data: state })
+        const stateUpdateCreator = state => ({ type: UPDATE_STATE, state })
         // Collect the action creators and apply dispatch
         const actions = withDispatchAndKeyCheck(
           collectActionCreators(
-            Object.assign({}, actionCreators, { [UPDATE_STATE]: stateUpdateCreator}),
+            Object.assign({}, actionCreators, { [UPDATE_STATE]: stateUpdateCreator }),
             content
           ),
           store.dispatch
@@ -358,6 +363,21 @@ export function createReducer(initialState, handlers) {
       return state
     }
   }
+}
+
+export function basicActionCreators(types) {
+  /** Create very simple action creators from a list of type strings.
+
+   Each action will accept a payload argument, and actions will have the form:
+
+   { type: 'MY_TYPE', payload: ['my', 'payload'] }
+
+    */
+  const actionCreators = {}
+  types.map(type => {
+    actionCreators[type] = payload => ({ type, payload })
+  })
+  return actionCreators
 }
 
 export function objectOf(cls) {
