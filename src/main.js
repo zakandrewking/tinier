@@ -3,8 +3,8 @@
 'use strict'
 
 import { get, noop, identity, constant, reverse, nthArg, flowRight as compose,
-         isEqual, isPlainObject, mapValues, curry, isFunction, omitBy, mergeWith,
-       } from 'lodash'
+         isEqual, isEqualWith, isPlainObject, mapValues, curry, isFunction,
+         omitBy, mergeWith, zipObject, } from 'lodash'
 import { createStore } from 'redux'
 import { zipFillNull } from './utils'
 
@@ -21,6 +21,7 @@ const NEEDS_CREATE     = '@TINIER_NEEDS_CREATE'
 const NEEDS_UPDATE     = '@TINIER_NEEDS_UPDATE'
 const NEEDS_DESTROY    = '@TINIER_NEEDS_DESTROY'
 const ACTION_CREATORS  = '@TINIER_ACTION_CREATORS'
+const ACTION           = '@TINIER_ACTION'
 
 function tagType (obj, type) {
   return Object.assign({}, obj, { type })
@@ -44,11 +45,12 @@ export function arrayOf (view) {
   return tagType({ view }, ARRAY_OF)
 }
 
-const checkType  = curry((type, obj) => obj.type === type)
-const isObjectOf = checkType(OBJECT_OF)
-const isArrayOf  = checkType(ARRAY_OF)
-const isView     = checkType(VIEW)
-const isArray    = Array.isArray
+const checkType      = curry((type, obj) => obj.type === type)
+const isObjectOf     = checkType(OBJECT_OF)
+const isArrayOf      = checkType(ARRAY_OF)
+const isView         = checkType(VIEW)
+const isTinierAction = checkType(ACTION)
+const isArray        = Array.isArray
 //  isPlainObject
 
 /**
@@ -98,7 +100,7 @@ function relativeAddress (address, relativeKeyList) {
       return null
     switch (rel[0]) {
     case ADDRESS_UP:
-      return rel[1] === add[-1] ? add.slice(0, -1) : null
+      return rel[1] === add[add.length - 1] ? add.slice(0, -1) : null
     case ADDRESS_DOWN:
       return [ ...add, rel[1] ]
     default:
@@ -215,17 +217,13 @@ function mapState (state, modelNode, address, fn) {
 /**
  * Combine the reducers in all children of the given view.
  *
- * @param {Function} reducer - A reducer for a tinier view.
- *
  * @param {Object} content - A model for a tinier view.
  *
  * @returns {Function} A reducer.
  */
-function reducerForModel (reducer, model) {
+function reducerForModel (model) {
   return (state, action) => {
-    const newState = reducer(state, action)
-    const stateToPass = newState === state ? state: newState
-    return mapState(newState, model, [], (view, localState, address) => {
+    return mapState(state, model, [], (view, localState, address) => {
       if ('address' in action && !isEqual(action.address, address)) {
         // If there is an address but it doesn't match, then ignore.
         return localState
@@ -267,12 +265,14 @@ function findActions (modelNode, dispatch, address = [], table = {}) {
     modelNode,
     {
       [OBJECT_OF]: (node, view) => {
-        const t = newTable(view, dispatch, address, table)
-        return findActions(view.model, dispatch, addressWith(address, ':'), t)
+        const newAddress = addressWith(address, ':')
+        const t = newTable(view, dispatch, newAddress, table)
+        return findActions(view.model, dispatch, newAddress, t)
       },
       [ARRAY_OF]: (node, view) => {
-        const t = newTable(view, dispatch, address, table)
-        return findActions(view.model, dispatch, addressWith(address, ':'), t)
+        const newAddress = addressWith(address, ':')
+        const t = newTable(view, dispatch, newAddress, table)
+        return findActions(view.model, dispatch, newAddress, t)
       },
       [VIEW]: (node, view) => {
         const t = newTable(view, dispatch, address, table)
@@ -293,6 +293,13 @@ function findActions (modelNode, dispatch, address = [], table = {}) {
   )
 }
 
+function checkAddress (actionAddress, absoluteAddress) {
+  return isEqualWith(actionAddress, absoluteAddress, (a1, a2) => {
+    if (a1 === ':') return true
+    // default to deep comparison
+  })
+}
+
 /**
  * Find the first action result in an action lookup table.
  *
@@ -305,7 +312,7 @@ function findActions (modelNode, dispatch, address = [], table = {}) {
 function findFirstAction (table, address, addressedAction) {
   const absoluteAddress = relativeAddress(address, addressedAction.relativeAddress)
   const results = get(table, addressedAction.action, [])
-          .filter(row => isEqual(row[0], absoluteAddress))
+          .filter(row => checkAddress(row[0], absoluteAddress))
           .map(row => row[1])
   return get(results, 0, null)
 }
@@ -350,7 +357,7 @@ function findAllActions (table, address) {
 }
 
 /**
- *
+ * Find all actions available to an address.
  */
 function makeAllActionsForAddress (model, dispatch) {
   const actionsTable = findActions(model, dispatch)
@@ -496,11 +503,12 @@ function updateWithModel (modelNode, userState, tinierState, appState,
           const newBindings = updateEl(
             view, bindings[k], s, appState,
             t[ACTION_CREATORS], t[NEEDS_CREATE], t[NEEDS_UPDATE], t[NEEDS_DESTROY],
-            actionWithAddressRelative(address)
+            actionWithAddressRelative(address), dispatch
           )
-          updateWithModel(view.model, s, t, appState, newBindings,
-                          actionWithAddressRelative, dispatch,
-                          addressWith(address, k) )
+          if (newBindings)
+            updateWithModel(view.model, s, t, appState, newBindings,
+                            actionWithAddressRelative, dispatch,
+                            addressWith(address, k) )
         })
       },
       [ARRAY_OF]: (node, view) => {
@@ -511,11 +519,12 @@ function updateWithModel (modelNode, userState, tinierState, appState,
           const newBindings = updateEl(
             view, bindings[i], s, appState,
             t[ACTION_CREATORS], t[NEEDS_CREATE], t[NEEDS_UPDATE], t[NEEDS_DESTROY],
-            actionWithAddressRelative(address)
+            actionWithAddressRelative(address), dispatch
           )
-          updateWithModel(view.model, s, t, appState, newBindings,
-                          actionWithAddressRelative, dispatch,
-                          addressWith(address, i) )
+          if (newBindings)
+            updateWithModel(view.model, s, t, appState, newBindings,
+                            actionWithAddressRelative, dispatch,
+                            addressWith(address, i) )
         })
       },
       [VIEW]: (node, view) => {
@@ -524,10 +533,11 @@ function updateWithModel (modelNode, userState, tinierState, appState,
         const newBindings = updateEl(
           view, bindings, userState, appState,
           t[ACTION_CREATORS], t[NEEDS_CREATE], t[NEEDS_UPDATE], t[NEEDS_DESTROY],
-          actionWithAddressRelative(address)
+          actionWithAddressRelative(address), dispatch
         )
-        updateWithModel(view.model, s, t, appState, newBindings,
-                        actionWithAddressRelative, dispatch, address)
+        if (newBindings)
+          updateWithModel(view.model, s, t, appState, newBindings,
+                          actionWithAddressRelative, dispatch, address)
       },
       [PLAIN_ARRAY]: (node) => {
         node.map((n, i) => {
@@ -615,11 +625,20 @@ export function createView ({ model             = {},
 /**
  * Run a tinier view.
  *
+ * @param {Object} view
+ * @param {*} appEl
+ * @param {Object} [state]
+ * @param {Function} [createStore]
+ *
  * @return {Object} The API functions.
  */
 export function run (view, appEl, state = null, createStore = createStore) {
+  // the app model makes sure the top-level view is available to the following
+  // functions
+  const appModel = view
+
   // generate a combined reducer for the application
-  const combinedReducer = reducerForModel(view.reducer, view.model)
+  const combinedReducer = reducerForModel(appModel)
 
   // Modify the top-level reducer to calculate the state diff and update the
   // view views with details.
@@ -629,32 +648,24 @@ export function run (view, appEl, state = null, createStore = createStore) {
     const userState = (action.type === UPDATE_STATE ?
                        action.state :
                        combinedReducer(oldUserState, action))
-    const tinierState = diffWithModel(view.model, userState, oldUserState, [])
+    const tinierState = diffWithModel(appModel, userState, oldUserState, [])
     return { tinierState, userState }
   }
 
   // Create the store.
   const store = createStore(combinedReducerWithDiff)
-  // Add an action for state update.
-  const stateUpdateCreator = state => ({ type: UPDATE_STATE, state })
-  // Apply dispatch for top level view action creators.
-  const appActions = withDispatch(
-    Object.assign({}, view.getActionCreators([]), { [UPDATE_STATE]: stateUpdateCreator }),
-    store.dispatch
-  )
 
   // make an actionWithAddressRelative function for routing actions.  TODO
   // memoize this function? Or crawl the whole model once? What if addresses
   // change?
-  const actionWithAddressRelative = makeActionWithAddressRelative(view.model, store.dispatch)
+  const actionWithAddressRelative = makeActionWithAddressRelative(appModel, store.dispatch)
 
   // Update function calls updateWithModel recursively to find nodes that need
   // updates and update them.
   const appUpdate = () => {
     const { tinierState, userState } = store.getState()
     // update the parent
-    const bindings = view.update(userState, userState, appEl, appActions)
-    updateWithModel(view.model, userState, tinierState, userState, bindings,
+    updateWithModel(appModel, userState, tinierState, userState, appEl,
                     actionWithAddressRelative, store.dispatch)
   }
 
@@ -663,11 +674,14 @@ export function run (view, appEl, state = null, createStore = createStore) {
 
   // Apply the given state, or else call init.
   const initialState = state || view.init()
-  view.create(initialState, initialState, appEl, appActions)
+  const stateUpdateCreator = state => ({ type: UPDATE_STATE, state })
   store.dispatch(stateUpdateCreator(initialState))
 
   // return global actions as API
-  return view.getAPI(appActions, actionWithAddressRelative([]))
+  const address = []
+  const appActions = withDispatch(view.getActionCreators(address),
+                                  store.dispatch)
+  return view.getAPI(appActions, actionWithAddressRelative(address))
 }
 
 /**
@@ -681,10 +695,12 @@ export function run (view, appEl, state = null, createStore = createStore) {
  */
 export function createMiddleware (view) {
   return ({ dispatch, getState }) => {
-    const allActions = makeAllActionsForAddress(view.model, dispatch)
-    return next => action =>
-      isFunction(action) ? action(allActions(action.address), getState) : next(action)
-    // TODO left off: a function will not have an address attribute!
+    const allActions = makeAllActionsForAddress(view, dispatch)
+    return next => action => {
+      return isTinierAction(action) ?
+        action.exec(allActions(action.address), getState) :
+        next(action)
+    }
   }
 }
 
@@ -706,32 +722,87 @@ export function createReducer (handlers) {
   }
 }
 
-export function createGlobalActionCreators (types) {
-  /** Create simple action creators from a list of type strings.
-
-   Each action will accept a payload argument, and actions will have the form:
-
-   { type: 'MY_TYPE', payload: ['my', 'payload'] }
-
-   */
-  const actionCreators = {}
-  types.map(type => {
-    actionCreators[type] = payload => ({ type, payload })
-  })
-  return actionCreators
+/**
+ * Create an async with a type string. These actions are meant to work with the
+ * tinier middeware (see tinier.createMiddleware).
+ *
+ * @param {Array} address - The address.
+ * @param {String} type - The type for the action.
+ * @param {Function} fn - A function that accepts a payload and returns a
+ * function that takes a list of actions, executes some actions, and can return
+ * a Promise.
+ *
+ * @return {Object} The action creator.
+ */
+export function createAsyncActionCreator (address, type, fn) {
+  return payload => {
+    const exec = fn(payload)
+    return tagType({ address, type, exec }, ACTION)
+  }
 }
 
+/**
+ * Multiple action creators with createAsyncActionCreator.
+ *
+ * @param {Object[]} fns - An object with keys for action types and functions
+ * that will form the basis for the action creators.
+ *
+ * @return {Object} The action creators.
+ */
+export function createAsyncActionCreators (address, fns) {
+  return mapValues(fns,
+                   (fn, type) => createAsyncActionCreator(address, type, fn))
+}
+
+/**
+ * Create a simple action creator a type string. Each action will accept a
+ * payload argument, and actions will have the form:
+ *
+ * { type: 'MY_TYPE', payload: ['my', 'payload'] }
+ *
+ * @param {String} type - The type for the action.
+ *
+ * @return {Object} The action creator.
+ */
+export function createGlobalActionCreator (type) {
+  return payload => ({ type, payload })
+}
+
+/**
+ * Multiple action creators with createGlobalActionCreator.
+ *
+ * @param {String[]} types - The types for the actions.
+ *
+ * @return {Object} The action creators.
+ */
+export function createGlobalActionCreators (types) {
+  return zipObject(types, types.map(createGlobalActionCreator))
+}
+
+/**
+ * Create a simple action creator a type string, with an address. Each action
+ * will accept a payload argument, and actions will have the form:
+ *
+ * { type: 'MY_TYPE', payload: ['my', 'payload'] }
+ *
+ * @param {Array} address - The address.
+ * @param {String} type - The type for the action.
+ *
+ * @return {Object} The action creator.
+ */
+export function createLocalActionCreator (address, type) {
+  return payload => ({ type, payload, address })
+}
+
+/**
+ * Multiple action creators with createLocalActionCreator.
+ *
+ * @param {Array} address - The address.
+ * @param {String[]} types - The types for the actions.
+ *
+ * @return {Object} The action creators.
+ */
 export function createLocalActionCreators (address, types) {
-  /** Create simple action creators from a list of type strings, with addresses.
-
-   Each action will accept a payload argument, and actions will have the form:
-
-   { type: 'MY_TYPE', payload: ['my', 'payload'], address }
-
-   */
-  const actionCreators = {}
-  types.map(type => {
-    actionCreators[type] = payload => ({ type, payload, address })
-  })
-  return actionCreators
+  return zipObject(types,
+                   types.map(type => createLocalActionCreator(address, type)))
 }
