@@ -1,6 +1,6 @@
 {
   "name": "tinier",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Simple views and bindings to redux, with d3.js in mind",
   "main": "lib/main.js",
   "files": [
