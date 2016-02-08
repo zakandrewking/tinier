@@ -36,10 +36,10 @@
     "chai": "^3.4.1",
     "flow-bin": "^0.21.0",
     "mocha": "^2.3.4",
-    "webpack": "^1.12.10"
+    "webpack": "^1.12.10",
+    "redux": "^3.0.5"
   },
   "dependencies": {
-    "lodash": "^4.1.0",
-    "redux": "^3.0.5"
+    "lodash": "^4.1.0"
   }
 }
