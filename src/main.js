@@ -3,10 +3,9 @@
 'use strict'
 
 import { get, noop, identity, constant, reverse, nthArg, flowRight as compose,
-         isEqual, isEqualWith, isPlainObject, mapValues, curry, isFunction,
-         omitBy, mergeWith, zipObject, } from 'lodash'
+         isEqual, isEqualWith, isPlainObject, map, mapValues, curry, isFunction,
+         omitBy, mergeWith, zipObject, includes, reduce, concat, } from 'lodash'
 import { createStore } from 'redux'
-import { zipFillNull } from './utils'
 
 const UPDATE_STATE     = '@TINIER_UPDATE_STATE'
 const ARRAY_OF         = '@TINIER_ARRAY_OF'
@@ -44,7 +43,7 @@ export function arrayOf (view) {
   return tagType({ view }, ARRAY_OF)
 }
 
-const checkType      = curry((type, obj) => obj.type === type)
+const checkType      = curry((type, obj) => get(obj, 'type') === type)
 const isObjectOf     = checkType(OBJECT_OF)
 const isArrayOf      = checkType(ARRAY_OF)
 const isView         = checkType(VIEW)
@@ -148,9 +147,56 @@ export function addressRelTo (relativeKeyList, address = []) {
 // 1. Reduce state by mapping over state tree
 // -------------------------------------------------------------------
 
+function orIdentity (obj, callback, init, mapFn, collectFn) {
+  const [ newObject, identical ] = reduce(
+    mapFn(obj, (val, ...args) => {
+      const out = callback(val, ...args)
+      return [ out, out === val ]
+    }),
+    (accum, current, key) => {
+      const [ vals, allSame ] = accum
+      const [ val,  same    ] = current
+      return [ collectFn(vals, val, key), allSame && same ]
+    },
+    [ init, true ]
+  )
+  return identical ? obj : newObject
+}
+
 /**
- * Return the state after calling fn for each view in content. This is usually a
- * mutually recursive function with fn.
+ * Map over an array.  If none of the values changed, then return the original
+ * array.
+ *
+ * @param {Array} array - An array.
+ * @param {Function} callback - A function that takes the same parameters as
+ * Array.prototype.map.
+ *
+ * @return {Array} An array of modified values or the original array if there
+ * were no changes
+ */
+export function mapOrIdentity (array, callback) {
+  return orIdentity(array, callback, [], map,
+                    (cur, val, i) => [ ...cur, val ])
+}
+
+/**
+ * Map over an object, as in lodash.mapValues.  If none of the values changed,
+ * then return the original object.
+ *
+ * @param {Object} object - An object.
+ * @param {Function} callback - A function that takes the same parameters as
+ * lodash.mapValues.
+ *
+ * @return {Object} An object of modified values or the original object if there
+ * were no changes.
+ */
+export function mapValuesOrIdentity (object, callback) {
+  return orIdentity(object, callback, {}, mapValues,
+                    (cur, val, key) => Object.assign(cur, { [key]: val }))
+}
+
+/**
+ * Return the state after calling fn for each view in content.
  *
  * @param {Object} state - The current state.
  *
@@ -163,23 +209,27 @@ export function addressRelTo (relativeKeyList, address = []) {
  *
  * @returns {Object} The new state.
  */
-function mapState (state, modelNode, address, fn) {
+export function mapState (state, modelNode, address, fn) {
   if (isArray(state)) {
     return handleNodeTypes(
       modelNode,
       {
         [OBJECT_OF]: throwContentMismatch(state),
         [ARRAY_OF]: (node, view) => {
-          return state.map((s, i) => {
-            return fn(view, s, addressWith(address, i))
+          return mapOrIdentity(state, (s, i) => {
+            const newAddress = addressWith(address, i)
+            const newState = fn(view, s, newAddress)
+            return mapState(newState, view.model, newAddress, fn)
           })
         },
         [VIEW]: (node, view) => {
-          return fn(view, state, address)
+          const newState = fn(view, state, address)
+          return mapState(newState, view.model, address, fn)
         },
         [PLAIN_OBJECT]: throwContentMismatch(state),
         [PLAIN_ARRAY]: (node) => {
-          return zipFillNull(state, node).map(([ s, n ], i) => {
+          return mapOrIdentity(state, (s, i) => {
+            const n = get(node, i, null)
             return mapState(s, n, addressWith(address, i), fn)
           })
         },
@@ -191,16 +241,19 @@ function mapState (state, modelNode, address, fn) {
       modelNode,
       {
         [OBJECT_OF]: (node, view) => {
-          return mapValues(state, (s, k) => {
-            return fn(view, s, addressWith(address, k))
+          return mapValuesOrIdentity(state, (s, k) => {
+            const newAddress = addressWith(address, k)
+            const newState = fn(view, s, newAddress)
+            return mapState(newState, view.model, newAddress, fn)
           })
         },
         [ARRAY_OF]: throwContentMismatch(state),
         [VIEW]: (node, view) => {
-          return fn(view, state, address)
+          const newState = fn(view, state, address)
+          return mapState(newState, view.model, address, fn)
         },
         [PLAIN_OBJECT]: (node) => {
-          return mapValues(state, (s, k) => {
+          return mapValuesOrIdentity(state, (s, k) => {
             return mapState(s, get(node, k, null), addressWith(address, k), fn)
           })
         },
@@ -228,8 +281,9 @@ function reducerForModel (model) {
         return localState
       } else {
         // Global actions and actions with matching addresses.
-        const newLocalState = view.reducer(localState, action)
-        return newLocalState === localState ? localState : newLocalState
+        const newState = view.reducer(localState, action)
+        debugger
+        return newState
       }
     })
   }
@@ -358,7 +412,13 @@ function makeActionWithAddressRelative (model, dispatch) {
   const actionsTable = findActionCreators(model)
   const lookup = curry(findFirstActionCreator)(actionsTable)
   return address => addressedAction => {
-    return withDispatch(dispatch, applyAddress(address, lookup(address, addressedAction)))
+    return withDispatch(
+      dispatch,
+      applyAddress(
+        relativeAddress(address, addressedAction.relativeAddress),
+        lookup(address, addressedAction)
+      )
+    )
   }
 }
 
@@ -375,7 +435,7 @@ function findAllActionCreators (table, address) {
   // map over all keys
   const allVals = mapValues(table, rows => {
     const matchingActionCreators = rows
-            .filter(row => isEqual(row[0], address))
+            .filter(row => checkAddress(row[0], address))
             .map(row => row[1])
     return get(matchingActionCreators, 0, null)
   })
@@ -440,6 +500,8 @@ function diffWithModel (modelNode, newState, oldState, address) {
           res[NEEDS_CREATE]  =  isValid(newState, i) &&  !isValid(oldState, i)
           res[NEEDS_UPDATE]  =  isValid(newState, i) && (!isValid(oldState, i) || newState[i] !== oldState[i])
           res[NEEDS_DESTROY] = !isValid(newState, i) &&   isValid(oldState, i)
+          if (isEqual(addressWith(address, i), ['cells', 0]))
+            debugger
           return res
         })
       },
@@ -637,14 +699,19 @@ function withDispatchMany (dispatch, actionCreators) {
  *
  * @returns {Function} A tinier view.
  */
-export function createView ({ model             = {},
-                              init              = constant({}),
-                              getReducer        = constant(nthArg(0)),
-                              actionCreators = constant({}),
-                              create            = noop,
-                              update            = constant({}),
-                              destroy           = noop,
-                              getAPI            = constant({}), }) {
+export function createView (options = {}) {
+  const { model          = {},
+          init           = constant({}),
+          getReducer     = constant(nthArg(0)),
+          actionCreators = constant({}),
+          create         = noop,
+          update         = constant({}),
+          destroy        = noop,
+          getAPI         = constant({}), } = options
+  mapValues(options, (_, k) => {
+    if (!includes(['model', 'init', 'getReducer', 'actionCreators', 'create', 'update', 'destroy', 'getAPI'], k))
+      console.error('Unexpected argument ' + k)
+  })
   return tagType({
     model: model,
     init,
@@ -734,7 +801,6 @@ export function createMiddleware (view) {
     return next => action => {
       return isTinierAction(action) ?
         action.exec(allActions(action.address), getState) :
-        // TODO LEFT OFF address is for the source instead of the destination!
         next(action)
     }
   }
