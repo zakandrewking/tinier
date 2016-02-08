@@ -5,8 +5,10 @@
   "main": "lib/main.js",
   "files": [
     "lib/",
-    "tinier.js",
-    "tinier.js.map"
+    "dist/tinier.js",
+    "dist/tinier.js.map",
+    "dist/tinier.min.js",
+    "dist/tinier.min.js.map"
   ],
   "repository": {
     "type": "git",
