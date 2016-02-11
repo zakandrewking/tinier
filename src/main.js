@@ -6,6 +6,7 @@ import { get, noop, identity, constant, reverse, nthArg, flowRight as compose,
          isEqual, isEqualWith, isPlainObject, map, mapValues, curry, isFunction,
          omitBy, mergeWith, zipObject, includes, reduce, concat, } from 'lodash'
 
+export const GLOBAL_ACTION    = '@TINIER_GLOBAL_ACTION'
 const UPDATE_STATE     = '@TINIER_UPDATE_STATE'
 const ARRAY_OF         = '@TINIER_ARRAY_OF'
 const OBJECT_OF        = '@TINIER_OBJECT_OF'
@@ -275,13 +276,12 @@ export function mapState (state, modelNode, address, fn) {
 function reducerForModel (model) {
   return (state, action) => {
     return mapState(state, model, [], (view, localState, address) => {
-      if ('address' in action && !isEqual(action.address, address)) {
+      if (!action[GLOBAL_ACTION] && !isEqual(action.address, address)) {
         // If there is an address but it doesn't match, then ignore.
         return localState
       } else {
         // Global actions and actions with matching addresses.
         const newState = view.reducer(localState, action)
-        debugger
         return newState
       }
     })
@@ -678,6 +678,8 @@ function withDispatchMany (dispatch, actionCreators) {
  *
  * @param {Object} viewArgs - Functions defining the tinier view.
  *
+ * @param {str} viewArgs.name - A name for the view, to make debugging easier.
+ *
  * @param {Object} viewArgs.model - The model object.
  *
  * @param {Function} viewArgs.init - A function to initialize the state for the
@@ -699,7 +701,8 @@ function withDispatchMany (dispatch, actionCreators) {
  * @returns {Function} A tinier view.
  */
 export function createView (options = {}) {
-  const { model          = {},
+  const { name           = '',
+          model          = {},
           init           = constant({}),
           getReducer     = constant(nthArg(0)),
           actionCreators = constant({}),
@@ -708,10 +711,11 @@ export function createView (options = {}) {
           destroy        = noop,
           getAPI         = constant({}), } = options
   mapValues(options, (_, k) => {
-    if (!includes(['model', 'init', 'getReducer', 'actionCreators', 'create', 'update', 'destroy', 'getAPI'], k))
+    if (!includes(['name', 'model', 'init', 'getReducer', 'actionCreators', 'create', 'update', 'destroy', 'getAPI'], k))
       console.error('Unexpected argument ' + k)
   })
   return tagType({
+    name,
     model: model,
     init,
     reducer: getReducer(model),
@@ -792,10 +796,24 @@ export function run (view, appEl, createStore, state = null) {
   return view.getAPI(appActions, actionWithAddressRelative(address))
 }
 
+function getWithEmptyOK (obj, loc, def) {
+  return isArray(loc) && loc.length === 0 ?
+    obj :
+    get(obj, loc, def)
+}
+
+function statesForAddress(address, getState) {
+  const state = getState().userState
+  const localState = getWithEmptyOK(state, address, null)
+  if (localState === null)
+    console.warn('Could not find local state at address ' + address)
+  return [ localState, state ]
+}
+
 /**
  * Create middleware for this view. Like redux-thunk, action creators can return
- * a function. In this case, the function takes two arguments, the actions
- * object (API) and the getState function.
+ * a function. In this case, the function takes three arguments, the actions
+ * object (API), the localState, and the appState.
  *
  * @param {Object} view - A tinier view.
  *
@@ -806,7 +824,7 @@ export function createMiddleware (view) {
     const allActions = makeAllActionsForAddress(view, dispatch)
     return next => action => {
       return isTinierAction(action) ?
-        action.exec(allActions(action.address), getState) :
+        action.exec(allActions(action.address), ...statesForAddress(action.address, getState)) :
         next(action)
     }
   }
@@ -821,9 +839,9 @@ export function createMiddleware (view) {
  * @return {Function} A redux reducer.
  */
 export function createReducer (handlers) {
-  return function reducer(state, action, key) {
+  return function reducer(state, action) {
     if (handlers.hasOwnProperty(action.type)) {
-      return handlers[action.type](state, action, key)
+      return handlers[action.type](state, action)
     } else {
       return state
     }

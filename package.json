@@ -40,6 +40,6 @@
     "redux": "^3.0.5"
   },
   "dependencies": {
-    "lodash": "^4.1.0"
+    "lodash": "^4.3.0"
   }
 }
