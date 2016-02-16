@@ -43,7 +43,8 @@ export function arrayOf (view) {
   return tagType({ view }, ARRAY_OF)
 }
 
-const checkType      = curry((type, obj) => get(obj, 'type') === type)
+// Make sure default is null so undefined type constant do not match
+const checkType      = curry((type, obj) => get(obj, 'type', null) === type)
 const isObjectOf     = checkType(OBJECT_OF)
 const isArrayOf      = checkType(ARRAY_OF)
 const isView         = checkType(VIEW)
