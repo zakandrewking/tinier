@@ -571,14 +571,14 @@ function updateEl (view, binding, state, appState, address, needsCreate,
   const actions = withDispatchMany(dispatch, applyAddressMany(address, view.actionCreators))
   const actionWithAddress = actionWithAddressRelative(address)
   if (needsDestroy) {
-    view.destroy(state, appState, binding, actions, actionWithAddress)
+    view.destroy(binding, state, appState, actions, actionWithAddress)
     return null
   }
   if (needsCreate) {
-    view.create(state, appState, binding, actions, actionWithAddress)
+    view.create(binding, state, appState, actions, actionWithAddress)
   }
   if (needsUpdate) {
-    return view.update(state, appState, binding, actions, actionWithAddress)
+    return view.update(binding, state, appState, actions, actionWithAddress)
   } else {
     return null
   }

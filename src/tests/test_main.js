@@ -1,7 +1,9 @@
 'use strict'
 
-import { createView, mapState, mapOrIdentity, mapValuesOrIdentity,
+import { createView, mapState, mapOrIdentity, mapValuesOrIdentity, run,
        } from '../main'
+
+import { createStore, } from 'redux'
 
 import { describe, it } from 'mocha'
 import { assert } from 'chai'
@@ -58,5 +60,31 @@ describe('mapState', () => {
   it('does not modify - tree', () => {
     const res = mapState(tree, defaultView, [], mapStateIdentity)
     assert.equal(tree, res)
+  })
+})
+
+describe('createView', () => {
+  it('respects binding object for create and update', (done) => {
+    const Child = createView({
+      create: function (el) {
+        assert.strictEqual(el, 'TAG')
+      },
+      update: function (el) {
+        assert.strictEqual(el, 'TAG')
+        done()
+      },
+    })
+    const Parent = createView({
+      model: {
+        child: Child
+      },
+      init: function () {
+        return { child: Child.init() }
+      },
+      update: function () {
+        return { child: 'TAG' }
+      }
+    })
+    run(Parent, null, createStore)
   })
 })
