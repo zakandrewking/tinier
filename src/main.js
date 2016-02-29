@@ -413,8 +413,8 @@ function findFirstActionCreator (table, address, addressedAction) {
 
 /**
  * Make a function called actionWithAddressRelative that will be passed into
- * create, update, destroy, and getAPI functions so they can look up and run
- * actions from other views.
+ * middleware actions functions so they can look up and run actions from other
+ * views.
  *
  * @param {Object} model - A tinier model.
  * @param {Function} dispatch - The redux dispatch function.
@@ -560,25 +560,23 @@ function diffWithModel (modelNode, newState, oldState, address) {
  * @param {Boolean} needsCreate
  * @param {Boolean} needsUpdate
  * @param {Boolean} needsDestroy
- * @param {Function} actionWithAddressRelative
  * @param {Function} dispatch
  *
  * @return {Object} New bindings if needsUpdate is true. Otherwise null.
  */
 function updateEl (view, binding, state, appState, address, needsCreate,
-                   needsUpdate, needsDestroy, actionWithAddressRelative,
+                   needsUpdate, needsDestroy,
                    dispatch) {
   const actions = withDispatchMany(dispatch, applyAddressMany(address, view.actionCreators))
-  const actionWithAddress = actionWithAddressRelative(address)
   if (needsDestroy) {
-    view.destroy(binding, state, appState, actions, actionWithAddress)
+    view.destroy(binding, state, appState, actions)
     return null
   }
   if (needsCreate) {
-    view.create(binding, state, appState, actions, actionWithAddress)
+    view.create(binding, state, appState, actions)
   }
   if (needsUpdate) {
-    return view.update(binding, state, appState, actions, actionWithAddress)
+    return view.update(binding, state, appState, actions)
   } else {
     return null
   }
@@ -593,7 +591,7 @@ function updateEl (view, binding, state, appState, address, needsCreate,
  * @param {Object} data - Some data that will be passed to updateEl.
  */
 function updateWithModel (modelNode, userState, tinierState, appState,
-                          bindings, actionWithAddressRelative, dispatch,
+                          bindings, dispatch,
                           address = []) {
   return handleNodeTypes(
     modelNode,
@@ -609,11 +607,11 @@ function updateWithModel (modelNode, userState, tinierState, appState,
           const newBindings = updateEl(
             view, bindings[k], s, appState, newAddress,
             t[NEEDS_CREATE], t[NEEDS_UPDATE], t[NEEDS_DESTROY],
-            actionWithAddressRelative, dispatch
+            dispatch
           )
           if (newBindings)
             updateWithModel(view.model, s, t, appState, newBindings,
-                            actionWithAddressRelative, dispatch, newAddress)
+                            dispatch, newAddress)
         })
       },
       [ARRAY_OF]: (node, view) => {
@@ -625,11 +623,11 @@ function updateWithModel (modelNode, userState, tinierState, appState,
           const newBindings = updateEl(
             view, bindings[i], s, appState, newAddress,
             t[NEEDS_CREATE], t[NEEDS_UPDATE], t[NEEDS_DESTROY],
-            actionWithAddressRelative, dispatch
+            dispatch
           )
           if (newBindings)
             updateWithModel(view.model, s, t, appState, newBindings,
-                            actionWithAddressRelative, dispatch, newAddress)
+                            dispatch, newAddress)
         })
       },
       [VIEW]: (node, view) => {
@@ -638,23 +636,23 @@ function updateWithModel (modelNode, userState, tinierState, appState,
         const newBindings = updateEl(
           view, bindings, userState, appState, address,
           t[NEEDS_CREATE], t[NEEDS_UPDATE], t[NEEDS_DESTROY],
-          actionWithAddressRelative, dispatch
+          dispatch
         )
         if (newBindings)
           updateWithModel(view.model, s, t, appState, newBindings,
-                          actionWithAddressRelative, dispatch, address)
+                          dispatch, address)
       },
       [PLAIN_ARRAY]: (node) => {
         node.map((n, i) => {
           updateWithModel(n, userState[i], tinierState[i], appState,
-                          bindings[i], actionWithAddressRelative, dispatch,
+                          bindings[i], dispatch,
                           addressWith(address, i))
         })
       },
       [PLAIN_OBJECT]: (node) => {
         mapValues(node, (n, k) => {
           updateWithModel(n, userState[k], tinierState[k], appState,
-                          bindings[k], actionWithAddressRelative, dispatch,
+                          bindings[k], dispatch,
                           addressWith(address, k))
         })
       }
@@ -778,18 +776,13 @@ export function run (view, appEl, createStore, state = null) {
   // Create the store.
   const store = createStore(combinedReducerWithDiff)
 
-  // make an actionWithAddressRelative function for routing actions.  TODO
-  // memoize this function? Or crawl the whole model once? What if addresses
-  // change?
-  const actionWithAddressRelative = makeActionWithAddressRelative(appModel, store.dispatch)
-
   // Update function calls updateWithModel recursively to find nodes that need
   // updates and update them.
   const appUpdate = () => {
     const { tinierState, userState } = store.getState()
     // update the parent
     updateWithModel(appModel, userState, tinierState, userState, appEl,
-                    actionWithAddressRelative, store.dispatch)
+                    store.dispatch)
   }
 
   // Subscribe to changes
@@ -804,7 +797,7 @@ export function run (view, appEl, createStore, state = null) {
   const address = []
   const appActions = withDispatchMany(store.dispatch,
                                       applyAddressMany(address, view.actionCreators))
-  return view.getAPI(appActions, actionWithAddressRelative(address))
+  return view.getAPI(appActions)
 }
 
 function getWithEmptyOK (obj, loc, def) {
@@ -832,9 +825,12 @@ function statesForAddress(address, getState) {
 export function createMiddleware (view) {
   return ({ dispatch, getState }) => {
     const allActions = makeAllActionsForAddress(view, dispatch)
+    const actionWithAddressRelative = makeActionWithAddressRelative(view.model, dispatch)
     return next => action => {
       return isTinierAction(action) ?
-        action.exec(allActions(action.address), ...statesForAddress(action.address, getState)) :
+        action.exec(allActions(action.address),
+                    actionWithAddressRelative(action.address),
+                    ...statesForAddress(action.address, getState)) :
         (action ? next(action) : null)
     }
   }
