@@ -2,7 +2,7 @@
 
 'use strict'
 
-import { flowRight as compose } from 'lodash.flowright'
+import { default as compose } from 'lodash.flowright'
 import get from 'lodash.get'
 import isPlainObject from 'lodash.isplainobject'
 import mapValues from 'lodash.mapvalues'
@@ -835,7 +835,7 @@ export function createMiddleware (view) {
     return next => action => {
       return isTinierAction(action) ?
         action.exec(allActions(action.address), ...statesForAddress(action.address, getState)) :
-        next(action)
+        (action ? next(action) : null)
     }
   }
 }
@@ -870,7 +870,8 @@ export function createReducer (handlers) {
 export function createAsyncActionCreator (fn, type) {
   return payload => {
     const exec = fn(payload)
-    return tagType({ type, exec }, ACTION)
+    if (exec)
+      return tagType({ type, exec }, ACTION)
   }
 }
 
