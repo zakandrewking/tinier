@@ -2,9 +2,41 @@
 
 'use strict'
 
-import { get, noop, identity, constant, reverse, nthArg, flowRight as compose,
-         isEqual, isEqualWith, isPlainObject, map, mapValues, curry, isFunction,
-         omitBy, mergeWith, zipObject, includes, reduce, concat, } from 'lodash'
+import { flowRight as compose } from 'lodash.flowright'
+import get from 'lodash.get'
+import isPlainObject from 'lodash.isplainobject'
+import mapValues from 'lodash.mapvalues'
+import mergeWith from 'lodash.mergewith'
+import omitBy from 'lodash.omitby'
+import reduce from 'lodash.reduce'
+import reverse from 'lodash.reverse'
+import zipObject from 'lodash.zipobject'
+
+// basic functions
+function noop () {}
+function constant (val) {
+  return () => val
+}
+export function nthArg (i) {
+  return (...args) => args[i]
+}
+function arrayEqual (a1, a2) {
+  if (a1.length !== a2.length)
+    return false
+  for (let i = 0, l = a1.length; i < l; i++)
+    if (a1[i] !== a2[i]) return false
+  return true
+}
+function arrayEqualWith (a1, a2, fn) {
+  if (a1.length !== a2.length)
+    return false
+  for (let i = 0, l = a1.length; i < l; i++)
+    if (!fn(a1[i], a2[i])) return false
+  return true
+}
+function partial (fn, arg) {
+  return (...args) => fn(arg, ...args)
+}
 
 export const GLOBAL_ACTION    = '@TINIER_GLOBAL_ACTION'
 const UPDATE_STATE     = '@TINIER_UPDATE_STATE'
@@ -44,11 +76,11 @@ export function arrayOf (view) {
 }
 
 // Make sure default is null so undefined type constant do not match
-const checkType      = curry((type, obj) => get(obj, 'type', null) === type)
-const isObjectOf     = checkType(OBJECT_OF)
-const isArrayOf      = checkType(ARRAY_OF)
-const isView         = checkType(VIEW)
-const isTinierAction = checkType(ACTION)
+const checkType      = (type, obj) => get(obj, 'type', null) === type
+const isObjectOf     = partial(checkType, OBJECT_OF)
+const isArrayOf      = partial(checkType, ARRAY_OF)
+const isView         = partial(checkType, VIEW)
+const isTinierAction = partial(checkType, ACTION)
 const isArray        = Array.isArray
 //  isPlainObject
 
@@ -74,10 +106,10 @@ function throwUnrecognizedType (node) {
   throw Error('Unrecognized node type in model: ' + node)
 }
 
-const throwContentMismatch = curry((state, node, ...args) => {
+function throwContentMismatch (state, node, ...args) {
   throw Error('Content shape does not match state shape: ' + node +
               ' <-> Array ' + state)
-})
+}
 
 // -------------------------------------------------------------------
 // Addresses
@@ -116,19 +148,6 @@ export function addressAction (action, relativeAddress) {
   /** Return an addressed action. */
   return tagType({ action, relativeAddress }, ADDRESSED_ACTION)
 }
-
-// example:
-// {
-//   cells: [ 0, { cell: 'cell1' } ],
-//   buttons: [ 0, 1, 'button2' ]
-// }
-//
-// addressRelTo([ 'cells', 1 ], addressRelFrom([ 'buttons', 2 ]))
-// [ [ ADDRESS_UP, 2 ], [ ADDRESS_UP, 'buttons' ],
-//   [ ADDRESS_DOWN, 'cells' ], [ ADDRESS_DOWN, 1 ] ]
-// addressRelFrom([ 'buttons', 2 ], addressRelTo([ 'cells', 1 ]))
-// [ [ ADDRESS_UP, 2 ], [ ADDRESS_UP, 'buttons' ],
-//   [ ADDRESS_DOWN, 'cells' ], [ ADDRESS_DOWN, 1 ] ]
 
 /**
  * Returns a relative address from somewhere to the given address
@@ -171,12 +190,12 @@ function orIdentity (obj, callback, init, mapFn, collectFn) {
  * @param {Array} array - An array.
  * @param {Function} callback - A function that takes the same parameters as
  * Array.prototype.map.
- *
  * @return {Array} An array of modified values or the original array if there
  * were no changes
  */
 export function mapOrIdentity (array, callback) {
-  return orIdentity(array, callback, [], map,
+  const arrayMap = (ar, fn) => ar.map(fn)
+  return orIdentity(array, callback, [], arrayMap,
                     (cur, val, i) => [ ...cur, val ])
 }
 
@@ -187,7 +206,6 @@ export function mapOrIdentity (array, callback) {
  * @param {Object} object - An object.
  * @param {Function} callback - A function that takes the same parameters as
  * lodash.mapValues.
- *
  * @return {Object} An object of modified values or the original object if there
  * were no changes.
  */
@@ -215,7 +233,7 @@ export function mapState (state, modelNode, address, fn) {
     return handleNodeTypes(
       modelNode,
       {
-        [OBJECT_OF]: throwContentMismatch(state),
+        [OBJECT_OF]: partial(throwContentMismatch, state),
         [ARRAY_OF]: (node, view) => {
           return mapOrIdentity(state, (s, i) => {
             const newAddress = addressWith(address, i)
@@ -227,7 +245,7 @@ export function mapState (state, modelNode, address, fn) {
           const newState = fn(view, state, address)
           return mapState(newState, view.model, address, fn)
         },
-        [PLAIN_OBJECT]: throwContentMismatch(state),
+        [PLAIN_OBJECT]: partial(throwContentMismatch, state),
         [PLAIN_ARRAY]: (node) => {
           return mapOrIdentity(state, (s, i) => {
             const n = get(node, i, null)
@@ -248,7 +266,7 @@ export function mapState (state, modelNode, address, fn) {
             return mapState(newState, view.model, newAddress, fn)
           })
         },
-        [ARRAY_OF]: throwContentMismatch(state),
+        [ARRAY_OF]: partial(throwContentMismatch, state),
         [VIEW]: (node, view) => {
           const newState = fn(view, state, address)
           return mapState(newState, view.model, address, fn)
@@ -258,7 +276,7 @@ export function mapState (state, modelNode, address, fn) {
             return mapState(s, get(node, k, null), addressWith(address, k), fn)
           })
         },
-        [PLAIN_ARRAY]: throwContentMismatch(state),
+        [PLAIN_ARRAY]: partial(throwContentMismatch, state),
       },
       constant(state)
     )
@@ -271,13 +289,12 @@ export function mapState (state, modelNode, address, fn) {
  * Combine the reducers in all children of the given view.
  *
  * @param {Object} content - A model for a tinier view.
- *
  * @returns {Function} A reducer.
  */
 function reducerForModel (model) {
   return (state, action) => {
     return mapState(state, model, [], (view, localState, address) => {
-      if (!action[GLOBAL_ACTION] && !isEqual(action.address, address)) {
+      if (!action[GLOBAL_ACTION] && !arrayEqual(action.address, address)) {
         // If there is an address but it doesn't match, then ignore.
         return localState
       } else {
@@ -309,7 +326,6 @@ function newTable(view, genAddress, table) {
  * @param {Function} dispatch - The redux dispatch function.
  * @param {Array} [genAddress = []] - A generic address, i.e. an address that
  * can include ':'.
- *
  * @return {Object} The lookup table. The table is an object where keys are
  * action types and values are pairs with a generic address and an action
  * creator reference. A generic address uses ':' in place of integer indices and
@@ -352,9 +368,9 @@ function findActionCreators (modelNode, genAddress = [], table = {}) {
  * Compare a generic address with an absolute, non-generic address.
  */
 function checkAddress (genAddress, absoluteAddress) {
-  return isEqualWith(genAddress, absoluteAddress, (a1, a2) => {
+  return arrayEqualWith(genAddress, absoluteAddress, (a1, a2) => {
     if (a1 === ':') return true
-    // default to deep comparison
+    else            return a1 === a2
   })
 }
 
@@ -376,7 +392,7 @@ function applyAddress (address, actionCreator) {
  * Intercept the action creators and add the given address.
  */
 function applyAddressMany (address, actionCreators) {
-  return mapValues(actionCreators, curry(applyAddress)(address))
+  return mapValues(actionCreators, partial(applyAddress, address))
 }
 
 /**
@@ -385,7 +401,6 @@ function applyAddressMany (address, actionCreators) {
  * @param {Object} table - The lookup table.
  * @param {Object} address - An address.
  * @param {Object} addressedAction - An addressed action.
- *
  * @return {Function} The first action creator found, or else null.
  */
 function findFirstActionCreator (table, address, addressedAction) {
@@ -403,14 +418,13 @@ function findFirstActionCreator (table, address, addressedAction) {
  *
  * @param {Object} model - A tinier model.
  * @param {Function} dispatch - The redux dispatch function.
- *
  * @return {Function} The actionWithAddressRelative function. Call this on an
  * address to create the actionWithAddress function. That function takes an
  * addressed action and returns the action function (JEEZ!).
  */
 function makeActionWithAddressRelative (model, dispatch) {
   const actionsTable = findActionCreators(model)
-  const lookup = curry(findFirstActionCreator)(actionsTable)
+  const lookup = partial(findFirstActionCreator, actionsTable)
   return address => addressedAction => {
     return withDispatch(
       dispatch,
@@ -450,7 +464,7 @@ function findAllActionCreators (table, address) {
  */
 function makeAllActionsForAddress (model, dispatch) {
   const actionsTable = findActionCreators(model)
-  const lookup = curry(findAllActionCreators)(actionsTable)
+  const lookup = partial(findAllActionCreators, actionsTable)
   return address => withDispatchMany(dispatch,
                                      applyAddressMany(address, lookup(address)))
 }
@@ -468,7 +482,6 @@ function makeAllActionsForAddress (model, dispatch) {
  * @param {Object} newState - The new state corresponding to modelNode.
  * @param {Object|null} oldState - The old state corresponding to modelNode.
  * @param {Array} address - The current address.
- *
  * @returns {Object} An object with the same shape as modelNode that specifies which
  * view need to be created, updated, and destroyed. Also keeps track of the
  * actions for each view.
@@ -500,7 +513,7 @@ function diffWithModel (modelNode, newState, oldState, address) {
           res[NEEDS_CREATE]  =  isValid(newState, i) &&  !isValid(oldState, i)
           res[NEEDS_UPDATE]  =  isValid(newState, i) && (!isValid(oldState, i) || newState[i] !== oldState[i])
           res[NEEDS_DESTROY] = !isValid(newState, i) &&   isValid(oldState, i)
-          if (isEqual(addressWith(address, i), ['cells', 0]))
+          if (arrayEqual(addressWith(address, i), ['cells', 0]))
             debugger
           return res
         })
@@ -671,7 +684,7 @@ function withDispatch (dispatch, actionCreator) {
  * @returns {Object} An object where values are functions that dispatch actions.
  */
 function withDispatchMany (dispatch, actionCreators) {
-  return mapValues(actionCreators, curry(withDispatch)(dispatch))
+  return mapValues(actionCreators, partial(withDispatch, dispatch))
 }
 
 /**
@@ -712,7 +725,8 @@ export function createView (options = {}) {
           destroy        = noop,
           getAPI         = constant({}), } = options
   mapValues(options, (_, k) => {
-    if (!includes(['name', 'model', 'init', 'getReducer', 'actionCreators', 'create', 'update', 'destroy', 'getAPI'], k))
+    if (['name', 'model', 'init', 'getReducer', 'actionCreators', 'create',
+         'update', 'destroy', 'getAPI'].indexOf(k) === -1)
       console.error('Unexpected argument ' + k)
   })
   return tagType({
@@ -732,17 +746,13 @@ export function createView (options = {}) {
  * Run a tinier view.
  *
  * @param {Object} view - A tinier view.
- *
  * @param {*} appEl - An element to pass to the view's create, update, and
  * destroy methods.
- *
  * @param {Function} createStore - A function to create a redux store. This can
  * be redux.createStore or a store with middleware generated by
  * redux.createStoreWithMiddleware.
- *
  * @param {Object} [state = null] - The initial state. If null, then view.init()
  * will be called to initialize the state.
- *
  * @return {Object} The API functions.
  */
 export function run (view, appEl, createStore, state = null) {
@@ -817,7 +827,6 @@ function statesForAddress(address, getState) {
  * object (API), the localState, and the appState.
  *
  * @param {Object} view - A tinier view.
- *
  * @return {Function} Redux middleware.
  */
 export function createMiddleware (view) {
@@ -836,7 +845,6 @@ export function createMiddleware (view) {
  *
  * @param {Object} handlers - An object where keys are action types and values
  * are handlers.
- *
  * @return {Function} A redux reducer.
  */
 export function createReducer (handlers) {
@@ -857,7 +865,6 @@ export function createReducer (handlers) {
  * function that takes a list of actions, executes some actions, and can return
  * a Promise.
  * @param {String} type - The type for the action.
- *
  * @return {Object} The action creator.
  */
 export function createAsyncActionCreator (fn, type) {
@@ -872,7 +879,6 @@ export function createAsyncActionCreator (fn, type) {
  *
  * @param {Object[]} fns - An object with keys for action types and functions
  * that will form the basis for the action creators.
- *
  * @return {Object} The action creators.
  */
 export function createAsyncActionCreators (fns) {
@@ -886,7 +892,6 @@ export function createAsyncActionCreators (fns) {
  * { type: 'MY_TYPE', payload: ['my', 'payload'] }
  *
  * @param {String} type - The type for the action.
- *
  * @return {Object} The action creator.
  */
 export function createActionCreator (type) {
@@ -895,9 +900,7 @@ export function createActionCreator (type) {
 
 /**
  * Multiple action creators with createActionCreator.
- *
  * @param {String[]} types - The types for the actions.
- *
  * @return {Object} The action creators.
  */
 export function createActionCreators (types) {

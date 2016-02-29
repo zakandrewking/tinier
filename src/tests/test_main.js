@@ -5,7 +5,6 @@ import { createView, mapState, mapOrIdentity, mapValuesOrIdentity,
 
 import { describe, it } from 'mocha'
 import { assert } from 'chai'
-import { nthArg, curry, identity, } from 'lodash'
 
 const tree = {
   a: [ 1, 2, 3 ],
@@ -14,7 +13,8 @@ const tree = {
     d: 'e',
   }
 }
-const mapStateIdentity = curry(nthArg)(1)
+const identity = x => x
+const mapStateIdentity = (...args) => args[1]
 const defaultView = createView()
 
 describe('mapOrIdentity', () => {
