@@ -1,9 +1,10 @@
 'use strict'
 
-import { createView, mapState, mapOrIdentity, mapValuesOrIdentity, run,
-       } from '../main'
+import {
+  mapValues, createComponent, mapState, mapOrIdentity, mapValuesOrIdentity, run,
+} from '../main'
 
-import { createStore, } from 'redux'
+import { createStore } from 'redux'
 
 import { describe, it } from 'mocha'
 import { assert } from 'chai'
@@ -17,7 +18,15 @@ const tree = {
 }
 const identity = x => x
 const mapStateIdentity = (...args) => args[1]
-const defaultView = createView()
+const defaultComponent = createComponent()
+
+describe('mapValues', () => {
+  it('iterates over keys', () => {
+    const obj = { a: 1, b: 2 }
+    const res = mapValues(obj, (x, k) => k + String(x + 1))
+    assert.deepEqual({ a: 'a2', b: 'b3' }, res)
+  })
+})
 
 describe('mapOrIdentity', () => {
   it('returns original array', () => {
@@ -46,45 +55,64 @@ describe('mapValuesOrIdentity', () => {
 describe('mapState', () => {
   it('does not modify - array', () => {
     const data = ['a', 'b', 'c']
-    const arrayView = createView({ model: [null, null, defaultView] })
-    const res = mapState(data, arrayView, [], mapStateIdentity)
+    const arrayComponent = createComponent({ model: [null, null, defaultComponent] })
+    const res = mapState(data, arrayComponent, [], mapStateIdentity)
     assert.equal(data, res)
   })
 
   it('does not modify - object', () => {
     const data = { a: 'a', b: 'b', c: 'c'}
-    const res = mapState(data, defaultView, [], mapStateIdentity)
+    const res = mapState(data, defaultComponent, [], mapStateIdentity)
     assert.equal(data, res)
   })
 
   it('does not modify - tree', () => {
-    const res = mapState(tree, defaultView, [], mapStateIdentity)
+    const res = mapState(tree, defaultComponent, [], mapStateIdentity)
     assert.equal(tree, res)
   })
 })
 
-describe('createView', () => {
-  it('respects binding object for create and update', (done) => {
-    const Child = createView({
-      create: function (el) {
+describe('createComponent', () => {
+  it('respects binding object for create and render', (done) => {
+    const Child = createComponent({
+      name: 'Child',
+
+      render: (state, methods, el) => {
         assert.strictEqual(el, 'TAG')
       },
-      update: function (el) {
+
+      willMount: (state, methods, el) => {
+        assert.strictEqual(el, 'TAG')
+      },
+
+      didMount: (state, methods, el) => {
+        assert.strictEqual(el, 'TAG')
+      },
+
+      shouldUpdate: (oldState, newState) => {
+        return true
+      },
+
+      willUpdate: (state, methods, el) => {
+        assert.strictEqual(el, 'TAG')
+      },
+
+      didUpdate: (state, methods, el) => {
         assert.strictEqual(el, 'TAG')
         done()
       },
-    })
-    const Parent = createView({
-      model: {
-        child: Child
+
+      willUnmount: (state, methods, el) => {
+        assert.strictEqual(el, 'TAG')
       },
-      init: function () {
-        return { child: Child.init() }
-      },
-      update: function () {
-        return { child: 'TAG' }
-      }
     })
+
+    const Parent = createComponent({
+      model: { child: Child },
+      init: () => ({ child: Child.init() }),
+      render: () => ({ child: 'TAG' }),
+    })
+
     run(Parent, null, createStore)
   })
 })

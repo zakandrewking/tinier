@@ -1,25 +1,24 @@
 /** @module tinier */
 
-'use strict'
-
-import { default as compose } from 'lodash.flowright'
-import get from 'lodash.get'
-import isPlainObject from 'lodash.isplainobject'
-import mapValues from 'lodash.mapvalues'
 import mergeWith from 'lodash.mergewith'
 import omitBy from 'lodash.omitby'
 import reduce from 'lodash.reduce'
 import reverse from 'lodash.reverse'
 import zipObject from 'lodash.zipobject'
 
+import { createStore as reduxCreateStore, applyMiddleware } from 'redux'
+
 // basic functions
 function noop () {}
+
 function constant (val) {
   return () => val
 }
+
 export function nthArg (i) {
   return (...args) => args[i]
 }
+
 function arrayEqual (a1, a2) {
   if (a1.length !== a2.length)
     return false
@@ -27,6 +26,7 @@ function arrayEqual (a1, a2) {
     if (a1[i] !== a2[i]) return false
   return true
 }
+
 function arrayEqualWith (a1, a2, fn) {
   if (a1.length !== a2.length)
     return false
@@ -34,17 +34,46 @@ function arrayEqualWith (a1, a2, fn) {
     if (!fn(a1[i], a2[i])) return false
   return true
 }
+
 function partial (fn, arg) {
   return (...args) => fn(arg, ...args)
 }
 
-export const GLOBAL_ACTION    = '@TINIER_GLOBAL_ACTION'
+/**
+* Iterate over the keys and values of an object. Uses Object.keys to find
+* iterable keys.
+* @param {Object} obj - The input object.
+* @param {Function} fn - A function that takes the arguments (value, key).
+* @return {Object} - A transformed object with values returned by the function.
+*/
+export function mapValues (obj, fn) {
+  return Object.keys(obj).reduce((c, v) => {
+    return { ...c, [v]: fn(obj[v], v) }
+  }, {})
+}
+
+/**
+ * Get the property of the object, or return the default value.
+ */
+function get (obj, prop, def) {
+  return obj.hasOwnProperty(prop) ? obj[prop] : def
+}
+
+/**
+ * Check if the value is an object with enumerable properties. Also returns true
+ * for arrays.
+ * @param {*} value - The value to test.
+ */
+function isObject (value) {
+  return value != null && (typeof value === 'object' || typeof value === 'function')
+}
+
 const UPDATE_STATE     = '@TINIER_UPDATE_STATE'
 const ARRAY_OF         = '@TINIER_ARRAY_OF'
 const OBJECT_OF        = '@TINIER_OBJECT_OF'
-const VIEW             = '@TINIER_VIEW'
-const PLAIN_OBJECT     = '@TINIER_PLAIN_OBJECT'
-const PLAIN_ARRAY      = '@TINIER_PLAIN_ARRAY'
+const COMPONENT             = '@TINIER_COMPONENT'
+const ARRAY            = '@TINIER_ARRAY'
+const OBJECT           = '@TINIER_OBJECT'
 const ADDRESSED_ACTION = '@TINIER_ADDRESSED_ACTION'
 const ADDRESS_UP       = '@TINIER_ADDRESS_UP'
 const ADDRESS_DOWN     = '@TINIER_ADDRESS_DOWN'
@@ -79,7 +108,7 @@ export function arrayOf (view) {
 const checkType      = (type, obj) => get(obj, 'type', null) === type
 const isObjectOf     = partial(checkType, OBJECT_OF)
 const isArrayOf      = partial(checkType, ARRAY_OF)
-const isView         = partial(checkType, VIEW)
+const isView         = partial(checkType, COMPONENT)
 const isTinierAction = partial(checkType, ACTION)
 const isArray        = Array.isArray
 //  isPlainObject
@@ -94,12 +123,12 @@ const isArray        = Array.isArray
  * @return {*} Return value from the callback function.
  */
 function handleNodeTypes (node, caseFns, defaultFn) {
-  if      (isObjectOf(node)) return caseFns[OBJECT_OF](node, node.view)
-  else if (isArrayOf(node))  return caseFns[ARRAY_OF](node, node.view)
-  else if (isView(node))     return caseFns[VIEW](node, node)
-  else if (isArray(node))    return caseFns[PLAIN_ARRAY](node)
-  else if (isPlainObject(node))   return caseFns[PLAIN_OBJECT](node)
-  else                       return defaultFn(node)
+  if      (isObjectOf(node))    return caseFns[OBJECT_OF](node, node.view)
+  else if (isArrayOf(node))     return caseFns[ARRAY_OF](node, node.view)
+  else if (isView(node))        return caseFns[COMPONENT](node, node)
+  else if (isArray(node))       return caseFns[PLAIN_ARRAY](node)
+  else if (isPlainObject(node)) return caseFns[PLAIN_OBJECT](node)
+  else                          return defaultFn(node)
 }
 
 function throwUnrecognizedType (node) {
@@ -241,7 +270,7 @@ export function mapState (state, modelNode, address, fn) {
             return mapState(newState, view.model, newAddress, fn)
           })
         },
-        [VIEW]: (node, view) => {
+        [COMPONENT]: (node, view) => {
           const newState = fn(view, state, address)
           return mapState(newState, view.model, address, fn)
         },
@@ -267,7 +296,7 @@ export function mapState (state, modelNode, address, fn) {
           })
         },
         [ARRAY_OF]: partial(throwContentMismatch, state),
-        [VIEW]: (node, view) => {
+        [COMPONENT]: (node, view) => {
           const newState = fn(view, state, address)
           return mapState(newState, view.model, address, fn)
         },
@@ -294,13 +323,12 @@ export function mapState (state, modelNode, address, fn) {
 function reducerForModel (model) {
   return (state, action) => {
     return mapState(state, model, [], (view, localState, address) => {
-      if (!action[GLOBAL_ACTION] && !arrayEqual(action.address, address)) {
+      if (isTinierAction(action) && !arrayEqual(action.address, address)) {
         // If there is an address but it doesn't match, then ignore.
         return localState
       } else {
-        // Global actions and actions with matching addresses.
-        const newState = view.reducer(localState, action)
-        return newState
+        // Ordinary actions and actions with matching addresses.
+        return view.reducer(localState, action)
       }
     })
   }
@@ -345,7 +373,7 @@ function findActionCreators (modelNode, genAddress = [], table = {}) {
         const t = newTable(view, newGenAddress, table)
         return findActionCreators(view.model, newGenAddress, t)
       },
-      [VIEW]: (node, view) => {
+      [COMPONENT]: (node, view) => {
         const t = newTable(view, genAddress, table)
         return findActionCreators(view.model, genAddress, t)
       },
@@ -478,7 +506,7 @@ function makeAllActionsForAddress (model, dispatch) {
  * the needsCreate, needsUpdate, and needsDestroy labels in the view in the
  * content.
  *
- * @param {Object} modelNode - A model or an element of a modelNode.
+ * @param {Object} modelNode - A model or a node of a model.
  * @param {Object} newState - The new state corresponding to modelNode.
  * @param {Object|null} oldState - The old state corresponding to modelNode.
  * @param {Array} address - The current address.
@@ -496,9 +524,9 @@ function diffWithModel (modelNode, newState, oldState, address) {
         return mapValues(l, function (_, k) {
           const res = diffWithModel(view.model, get(newState, k, null), get(oldState, k, null),
                                     addressWith(address, k))
-          res[NEEDS_CREATE]  =  isValid(newState, k) &&  !isValid(oldState, k)
-          res[NEEDS_UPDATE]  =  isValid(newState, k) && (!isValid(oldState, k) || newState[k] !== oldState[k])
-          res[NEEDS_DESTROY] = !isValid(newState, k) &&   isValid(oldState, k)
+          res[NEEDS_CREATE]  =  isValid(newState, k) && !isValid(oldState, k)
+          res[NEEDS_UPDATE]  =  isValid(newState, k) &&  isValid(oldState, k) && newState[k] !== oldState[k]
+          res[NEEDS_DESTROY] = !isValid(newState, k) &&  isValid(oldState, k)
           return res
         })
       },
@@ -511,19 +539,19 @@ function diffWithModel (modelNode, newState, oldState, address) {
           const res = diffWithModel(view.model, get(newState, i, null), get(oldState, i, null),
                                     addressWith(address, i))
           res[NEEDS_CREATE]  =  isValid(newState, i) &&  !isValid(oldState, i)
-          res[NEEDS_UPDATE]  =  isValid(newState, i) && (!isValid(oldState, i) || newState[i] !== oldState[i])
+          res[NEEDS_UPDATE]  =  isValid(newState, i) &&   isValid(oldState, i) && newState[i] !== oldState[i]
           res[NEEDS_DESTROY] = !isValid(newState, i) &&   isValid(oldState, i)
           if (arrayEqual(addressWith(address, i), ['cells', 0]))
             debugger
           return res
         })
       },
-      [VIEW]: (node, view) => {
+      [COMPONENT]: (node, view) => {
         const isValid = obj => obj !== null
         const res = diffWithModel(view.model, newState || null, oldState || null,
                                   address)
         res[NEEDS_CREATE]  =  isValid(newState) &&  !isValid(oldState)
-        res[NEEDS_UPDATE]  =  isValid(newState) && (!isValid(oldState) || newState !== oldState)
+        res[NEEDS_UPDATE]  =  isValid(newState) &&   isValid(oldState) && newState !== oldState
         res[NEEDS_DESTROY] = !isValid(newState) &&   isValid(oldState)
         return res
       },
@@ -549,13 +577,11 @@ function diffWithModel (modelNode, newState, oldState, address) {
 // -------------------------------------------------------------------
 
 /**
- * Run create, update, and destroy for the element. If needsDestroy is true,
- * then update and create will not be run.
+ * Run lifecycle functions for the view.
  *
  * @param {Object} view
  * @param {Object} binding
  * @param {Object} state
- * @param {Object} appState
  * @param {Array} address
  * @param {Boolean} needsCreate
  * @param {Boolean} needsUpdate
@@ -564,22 +590,22 @@ function diffWithModel (modelNode, newState, oldState, address) {
  *
  * @return {Object} New bindings if needsUpdate is true. Otherwise null.
  */
-function updateEl (view, binding, state, appState, address, needsCreate,
-                   needsUpdate, needsDestroy,
-                   dispatch) {
-  const actions = withDispatchMany(dispatch, applyAddressMany(address, view.actionCreators))
+function updateEl (view, binding, state, needsCreate, needsUpdate, needsDestroy) {
   if (needsDestroy) {
-    view.destroy(binding, state, appState, actions)
+    view.willUnmount(binding, state, view.methods)
     return null
   }
-  if (needsCreate) {
-    view.create(binding, state, appState, actions)
-  }
-  if (needsUpdate) {
-    return view.update(binding, state, appState, actions)
-  } else {
-    return null
-  }
+  if (needsCreate)
+    view.willMount(binding, state, view.methods)
+  else if (needsUpdate)
+    view.willUpdate(binding, state, view.methods)
+  const res = (needsCreate || (needsUpdate && view.shouldUpdate(binding, state, view.methods))) ?
+          view.render(binding, state, view.methods) : null
+  if (needsCreate)
+    view.didMount(binding, state, view.methods)
+  else if (needsUpdate)
+    view.didUpdate(binding, state, view.methods)
+  return res
 }
 
 /**
@@ -604,11 +630,8 @@ function updateWithModel (modelNode, userState, tinierState, appState,
           const newAddress = addressWith(address, k)
           // TODO make these accessions into gets and add nice error messages
           const s = userState[k]
-          const newBindings = updateEl(
-            view, bindings[k], s, appState, newAddress,
-            t[NEEDS_CREATE], t[NEEDS_UPDATE], t[NEEDS_DESTROY],
-            dispatch
-          )
+          const newBindings = updateEl(view, bindings[k], s, t[NEEDS_CREATE],
+                                       t[NEEDS_UPDATE], t[NEEDS_DESTROY])
           if (newBindings)
             updateWithModel(view.model, s, t, appState, newBindings,
                             dispatch, newAddress)
@@ -620,24 +643,18 @@ function updateWithModel (modelNode, userState, tinierState, appState,
         tinierState.map((t, i) => {
           const newAddress = addressWith(address, i)
           const s = userState[i]
-          const newBindings = updateEl(
-            view, bindings[i], s, appState, newAddress,
-            t[NEEDS_CREATE], t[NEEDS_UPDATE], t[NEEDS_DESTROY],
-            dispatch
-          )
+          const newBindings = updateEl(view, bindings[i], s, t[NEEDS_CREATE],
+                                       t[NEEDS_UPDATE], t[NEEDS_DESTROY])
           if (newBindings)
             updateWithModel(view.model, s, t, appState, newBindings,
                             dispatch, newAddress)
         })
       },
-      [VIEW]: (node, view) => {
+      [COMPONENT]: (node, view) => {
         const s = userState
         const t = tinierState
-        const newBindings = updateEl(
-          view, bindings, userState, appState, address,
-          t[NEEDS_CREATE], t[NEEDS_UPDATE], t[NEEDS_DESTROY],
-          dispatch
-        )
+        const newBindings = updateEl(view, bindings, userState, t[NEEDS_CREATE],
+                                     t[NEEDS_UPDATE], t[NEEDS_DESTROY])
         if (newBindings)
           updateWithModel(view.model, s, t, appState, newBindings,
                           dispatch, address)
@@ -670,7 +687,7 @@ function updateWithModel (modelNode, userState, tinierState, appState,
  * @returns {Object} An object where values are functions that dispatch actions.
  */
 function withDispatch (dispatch, actionCreator) {
-  return compose(dispatch, actionCreator)
+  return (...args) => { dispatch(actionCreator(...args)) }
 }
 
 /**
@@ -686,118 +703,49 @@ function withDispatchMany (dispatch, actionCreators) {
 }
 
 /**
- * Create a tinier view.
+ * Create a tinier component.
  *
- * @param {Object} viewArgs - Functions defining the tinier view.
- *
- * @param {str} viewArgs.name - A name for the view, to make debugging easier.
- *
- * @param {Object} viewArgs.model - The model object.
- *
- * @param {Function} viewArgs.init - A function to initialize the state for the
- * view.
- *
- * @param {Function} viewArgs.getReducer - A function that takes the model as an
+ * @param {Object} componentArgs - Functions defining the tinier view.
+ * @param {str} componentArgs.displayName - A name for the view, to make
+ * debugging easier.
+ * @param {Object} componentArgs.model - The model object.
+ * @param {Function} componentArgs.init - A function to initialize the state for
+ * the component.
+ * @param {Function} componentArgs.getReducer - A function that takes the model as an
  * argument and produces a redux reducer.
+ * @param {Function} componentArgs.actionCreators -
+ * @param {Function} componentArgs.willMount -
+ * @param {Function} componentArgs.didMount -
+ * @param {Function} componentArgs.willUpdate -
+ * @param {Function} componentArgs.didUpdate -
+ * @param {Function} componentArgs.willUnmount -
+ * @param {Function} componentArgs.render -
+ * @param {Function} componentArgs.getAPI -
  *
- * @param {Function} viewArgs.actionCreators -
- *
- * @param {Function} viewArgs.create -
- *
- * @param {Function} viewArgs.update -
- *
- * @param {Function} viewArgs.destroy -
- *
- * @param {Function} viewArgs.getAPI -
- *
- * @returns {Function} A tinier view.
+ * @returns {Object} A tinier component.
  */
-export function createView (options = {}) {
-  const { name           = '',
-          model          = {},
-          init           = constant({}),
-          getReducer     = constant(nthArg(0)),
-          actionCreators = constant({}),
-          create         = noop,
-          update         = constant({}),
-          destroy        = noop,
-          getAPI         = constant({}), } = options
+export function createComponent (options = {}) {
+  // default attributes
+  const defaults = {
+    displayName:  '',
+    model:        {},
+    init:         constant({}),
+    reducers:     {},
+    willMount:    noop,
+    didMount:     noop,
+    willUpdate:   noop,
+    didUpdate:    noop,
+    willUnmount:  noop,
+    render:       constant({}),
+  }
+  // check inputs
   mapValues(options, (_, k) => {
-    if (['name', 'model', 'init', 'getReducer', 'actionCreators', 'create',
-         'update', 'destroy', 'getAPI'].indexOf(k) === -1)
+    if (!(k in defaults)) {
       console.error('Unexpected argument ' + k)
+    }
   })
-  return tagType({
-    name,
-    model: model,
-    init,
-    reducer: getReducer(model),
-    actionCreators,
-    create,
-    update,
-    destroy,
-    getAPI,
-  }, VIEW)
-}
-
-/**
- * Run a tinier view.
- *
- * @param {Object} view - A tinier view.
- * @param {*} appEl - An element to pass to the view's create, update, and
- * destroy methods.
- * @param {Function} createStore - A function to create a redux store. This can
- * be redux.createStore or a store with middleware generated by
- * redux.createStoreWithMiddleware.
- * @param {Object} [state = null] - The initial state. If null, then view.init()
- * will be called to initialize the state.
- * @return {Object} The API functions.
- */
-export function run (view, appEl, createStore, state = null) {
-  // the app model makes sure the top-level view is available to the following
-  // functions
-  const appModel = view
-
-  // generate a combined reducer for the application
-  const combinedReducer = reducerForModel(appModel)
-
-  // Modify the top-level reducer to calculate the state diff and update the
-  // view views with details.
-  const combinedReducerWithDiff = (state, action) => {
-    // TODO better solution. Maybe with the @@init action?
-    const oldUserState = get(state, 'userState', null)
-    const userState = (action.type === UPDATE_STATE ?
-                       action.state :
-                       combinedReducer(oldUserState, action))
-    const tinierState = diffWithModel(appModel, userState, oldUserState, [])
-    return { tinierState, userState }
-  }
-
-  // Create the store.
-  const store = createStore(combinedReducerWithDiff)
-
-  // Update function calls updateWithModel recursively to find nodes that need
-  // updates and update them.
-  const appUpdate = () => {
-    const { tinierState, userState } = store.getState()
-    // update the parent
-    updateWithModel(appModel, userState, tinierState, userState, appEl,
-                    store.dispatch)
-  }
-
-  // Subscribe to changes
-  store.subscribe(appUpdate)
-
-  // Apply the given state, or else call init.
-  const initialState = state || view.init()
-  const stateUpdateCreator = state => ({ type: UPDATE_STATE, state })
-  store.dispatch(stateUpdateCreator(initialState))
-
-  // return global actions as API
-  const address = []
-  const appActions = withDispatchMany(store.dispatch,
-                                      applyAddressMany(address, view.actionCreators))
-  return view.getAPI(appActions)
+  // set defaults & tag
+  return tagType({ ...defaults, ...options }, COMPONENT)
 }
 
 function getWithEmptyOK (obj, loc, def) {
@@ -815,17 +763,17 @@ function statesForAddress(address, getState) {
 }
 
 /**
- * Create middleware for this view. Like redux-thunk, action creators can return
- * a function. In this case, the function takes three arguments, the actions
- * object (API), the localState, and the appState.
+ * Create middleware for this component. Like redux-thunk, action creators can
+ * return a function. In this case, the function takes three arguments, the
+ * actions object (API), the localState, and the appState.
  *
- * @param {Object} view - A tinier view.
+ * @param {Object} component - A tinier component.
  * @return {Function} Redux middleware.
  */
-export function createMiddleware (view) {
+export function createMiddleware (component) {
   return ({ dispatch, getState }) => {
-    const allActions = makeAllActionsForAddress(view, dispatch)
-    const actionWithAddressRelative = makeActionWithAddressRelative(view.model, dispatch)
+    const allActions = makeAllActionsForAddress(component, dispatch)
+    const actionWithAddressRelative = makeActionWithAddressRelative(component.model, dispatch)
     return next => action => {
       return isTinierAction(action) ?
         action.exec(allActions(action.address),
@@ -837,69 +785,63 @@ export function createMiddleware (view) {
 }
 
 /**
- * Create a reducer for the handlers.
- *
- * @param {Object} handlers - An object where keys are action types and values
- * are handlers.
- * @return {Function} A redux reducer.
+ * Run a tinier component.
+ * @param {Object} component - A tinier component.
+ * @param {*} appEl - An element to pass to the component's create, update, and
+ * destroy methods.
+ * @param {Function} createStore - A function to create a redux store. This can
+ * be redux.createStore or a store with middleware generated by
+ * redux.createStoreWithMiddleware.
+ * @param {Object} state - The initial state. If null, then component.init()
+ * will be called to initialize the state.
+ * @return {Object} The API functions.
  */
-export function createReducer (handlers) {
-  return function reducer(state, action) {
-    if (handlers.hasOwnProperty(action.type)) {
-      return handlers[action.type](state, action)
-    } else {
-      return state
-    }
+export function run (component, appEl, createStore = null, state = null) {
+  // the app model makes sure the top-level component is available to the following
+  // functions
+  const appModel = component
+
+  // generate a combined reducer for the application
+  const combinedReducer = reducerForModel(appModel)
+
+  // Modify the top-level reducer to calculate the state diff and update the
+  // view views with details.
+  const combinedReducerWithDiff = (state, action) => {
+    // TODO better solution. Maybe with the @@init action?
+    const oldUserState = get(state, 'userState', null)
+    const userState = (action.type === UPDATE_STATE ?
+                       action.state :
+                       combinedReducer(oldUserState, action))
+    const tinierState = diffWithModel(appModel, userState, oldUserState, [])
+    return { tinierState, userState }
   }
-}
 
-/**
- * Create an async with a type string. These actions are meant to work with the
- * tinier middleware (see tinier.createMiddleware).
- *
- * @param {Function} fn - A function that accepts a payload and returns a
- * function that takes a list of actions, executes some actions, and can return
- * a Promise.
- * @param {String} type - The type for the action.
- * @return {Object} The action creator.
- */
-export function createAsyncActionCreator (fn, type) {
-  return payload => {
-    const exec = fn(payload)
-    if (exec)
-      return tagType({ type, exec }, ACTION)
+  // Create the store.
+  if (createStore === null) {
+    createStore = applyMiddleware(createMiddleware(component))(reduxCreateStore)
   }
-}
+  const store = createStore(combinedReducerWithDiff)
 
-/**
- * Multiple action creators with createAsyncActionCreator.
- *
- * @param {Object[]} fns - An object with keys for action types and functions
- * that will form the basis for the action creators.
- * @return {Object} The action creators.
- */
-export function createAsyncActionCreators (fns) {
-  return mapValues(fns, createAsyncActionCreator)
-}
+  // Update function calls updateWithModel recursively to find nodes that need
+  // updates and update them.
+  const appUpdate = () => {
+    const { tinierState, userState } = store.getState()
+    // update the parent
+    updateWithModel(appModel, userState, tinierState, userState, appEl,
+                    store.dispatch)
+  }
 
-/**
- * Create a simple action creator a type string. Each action will accept a
- * payload argument, and actions will have the form:
- *
- * { type: 'MY_TYPE', payload: ['my', 'payload'] }
- *
- * @param {String} type - The type for the action.
- * @return {Object} The action creator.
- */
-export function createActionCreator (type) {
-  return payload => ({ type, payload })
-}
+  // Subscribe to changes
+  store.subscribe(appUpdate)
 
-/**
- * Multiple action creators with createActionCreator.
- * @param {String[]} types - The types for the actions.
- * @return {Object} The action creators.
- */
-export function createActionCreators (types) {
-  return zipObject(types, types.map(createActionCreator))
+  // Apply the given state, or else call init.
+  const initialState = state || component.init()
+  const stateUpdateCreator = state => ({ type: UPDATE_STATE, state })
+  store.dispatch(stateUpdateCreator(initialState))
+
+  // return global actions as API
+  const address = []
+  const methods = withDispatchMany(store.dispatch,
+                                   applyAddressMany(address, component.actionCreators))
+  return methods
 }
