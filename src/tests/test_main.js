@@ -1,10 +1,7 @@
-'use strict'
-
 import {
-  mapValues, createComponent, mapState, mapOrIdentity, mapValuesOrIdentity, run,
+    mapValues, get, isObject, tagType, handleNodeTypes, mapOrIdentity,
+    mapValuesOrIdentity, mapState, createComponent, reducerForModel, run,
 } from '../main'
-
-import { createStore } from 'redux'
 
 import { describe, it } from 'mocha'
 import { assert } from 'chai'
@@ -25,6 +22,34 @@ describe('mapValues', () => {
     const obj = { a: 1, b: 2 }
     const res = mapValues(obj, (x, k) => k + String(x + 1))
     assert.deepEqual({ a: 'a2', b: 'b3' }, res)
+  })
+})
+
+describe('get', () => {
+    it('gets a value from an object with a default return value', () => {
+        const object = { a: 10 }
+        assert.strictEqual(get(object, 'a', 20), 10)
+        assert.strictEqual(get(object, 'b', 20), 20)
+    })
+})
+
+describe('isObject', () => {
+  it('is true for object literals', () => {
+    assert.isTrue(isObject({ a: 10 }))
+  })
+  it('is true for array literals', () => {
+    assert.isTrue(isObject([ 10 ]))
+  })
+  it('is false for functions, strings, numbers', () => {
+    assert.isFalse(isObject(() => [ 10 ]))
+    assert.isFalse(isObject(10))
+    assert.isFalse(isObject('10'))
+  })
+})
+
+describe('tagType', () => {
+  it('returns a new object with the type', () => {
+    assert.deepEqual(tagType({ a: 10 }, 'TAG'), { a: 10, type: 'TAG' })
   })
 })
 
@@ -72,11 +97,34 @@ describe('mapState', () => {
   })
 })
 
+describe('reducerForModel', () => {
+    it('combines reducers for a model', () => {
+        // define components
+        const activate = (state, _) => ({ ...state, active: true })
+        const Child = createComponent({
+            init: () => ({ active: false }),
+            reducers: { activate },
+        })
+        const Parent = createComponent({
+            model: { child: Child },
+            init: () => ({ child: Child.init(), active: false }),
+            reducers: { activate },
+        })
+        // make a reducer
+        const combinedReducer = reducerForModel(Parent)
+        // run reducer
+        const testState = Parent.init()
+        assert.isFalse(result.active)
+        assert.isFalse(result.child.active)
+        const result = combinedReducer(testState, 'EMPTY')
+        assert.isTrue(result.active)
+        assert.isTrue(result.child.active)
+    })
+})
+
 describe('createComponent', () => {
   it('respects binding object for create and render', (done) => {
     const Child = createComponent({
-      name: 'Child',
-
       render: (state, methods, el) => {
         assert.strictEqual(el, 'TAG')
       },
@@ -113,6 +161,6 @@ describe('createComponent', () => {
       render: () => ({ child: 'TAG' }),
     })
 
-    run(Parent, null, createStore)
+    run(Parent, null)
   })
 })

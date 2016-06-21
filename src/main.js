@@ -44,7 +44,7 @@ function partial (fn, arg) {
 * iterable keys.
 * @param {Object} obj - The input object.
 * @param {Function} fn - A function that takes the arguments (value, key).
-* @return {Object} - A transformed object with values returned by the function.
+* @return {Object} A transformed object with values returned by the function.
 */
 export function mapValues (obj, fn) {
   return Object.keys(obj).reduce((c, v) => {
@@ -54,24 +54,29 @@ export function mapValues (obj, fn) {
 
 /**
  * Get the property of the object, or return the default value.
+ * @param {Object} object - An object.
+ * @param {String} property - An property of the object.
+ * @param {*} defaultValue - The default if the property is not present.
+ * @return {*} The value of the property or, if not present, the default value.
  */
-function get (obj, prop, def) {
-  return obj.hasOwnProperty(prop) ? obj[prop] : def
+export function get (object, property, defaultValue) {
+  return object.hasOwnProperty(property) ? object[property] : defaultValue
 }
 
 /**
  * Check if the value is an object with enumerable properties. Also returns true
  * for arrays.
  * @param {*} value - The value to test.
+ * @return {Boolean}
  */
-function isObject (value) {
-  return value != null && (typeof value === 'object' || typeof value === 'function')
+export function isObject (value) {
+  return value != null && (typeof value === 'object')
 }
 
 const UPDATE_STATE     = '@TINIER_UPDATE_STATE'
 const ARRAY_OF         = '@TINIER_ARRAY_OF'
 const OBJECT_OF        = '@TINIER_OBJECT_OF'
-const COMPONENT             = '@TINIER_COMPONENT'
+const COMPONENT        = '@TINIER_COMPONENT'
 const ARRAY            = '@TINIER_ARRAY'
 const OBJECT           = '@TINIER_OBJECT'
 const ADDRESSED_ACTION = '@TINIER_ADDRESSED_ACTION'
@@ -82,14 +87,15 @@ const NEEDS_UPDATE     = '@TINIER_NEEDS_UPDATE'
 const NEEDS_DESTROY    = '@TINIER_NEEDS_DESTROY'
 const ACTION           = '@TINIER_ACTION'
 
-function tagType (obj, type) {
-  return Object.assign({}, obj, { type })
+export function tagType (obj, type) {
+  return { ...obj, type }
 }
 
 /**
  * Create an object representing many instances of this view, for use in a tinier
  * model.
  * @param {Object} view - Tinier view.
+ * @return {Object}
  */
 export function objectOf (view) {
   return tagType({ view }, OBJECT_OF)
@@ -99,6 +105,7 @@ export function objectOf (view) {
  * Create an array representing many instances of this view, for use in a tinier
  * model.
  * @param {Object} view - Tinier view.
+ * @return {Object}
  */
 export function arrayOf (view) {
   return tagType({ view }, ARRAY_OF)
@@ -111,7 +118,6 @@ const isArrayOf      = partial(checkType, ARRAY_OF)
 const isView         = partial(checkType, COMPONENT)
 const isTinierAction = partial(checkType, ACTION)
 const isArray        = Array.isArray
-//  isPlainObject
 
 /**
  * Run functions depending on the object type of node.
@@ -126,8 +132,8 @@ function handleNodeTypes (node, caseFns, defaultFn) {
   if      (isObjectOf(node))    return caseFns[OBJECT_OF](node, node.view)
   else if (isArrayOf(node))     return caseFns[ARRAY_OF](node, node.view)
   else if (isView(node))        return caseFns[COMPONENT](node, node)
-  else if (isArray(node))       return caseFns[PLAIN_ARRAY](node)
-  else if (isPlainObject(node)) return caseFns[PLAIN_OBJECT](node)
+  else if (isArray(node))       return caseFns[ARRAY](node)
+  else if (isObject(node))      return caseFns[OBJECT](node)
   else                          return defaultFn(node)
 }
 
@@ -274,8 +280,8 @@ export function mapState (state, modelNode, address, fn) {
           const newState = fn(view, state, address)
           return mapState(newState, view.model, address, fn)
         },
-        [PLAIN_OBJECT]: partial(throwContentMismatch, state),
-        [PLAIN_ARRAY]: (node) => {
+        [OBJECT]: partial(throwContentMismatch, state),
+        [ARRAY]: (node) => {
           return mapOrIdentity(state, (s, i) => {
             const n = get(node, i, null)
             return mapState(s, n, addressWith(address, i), fn)
@@ -284,7 +290,7 @@ export function mapState (state, modelNode, address, fn) {
       },
       constant(state)
     )
-  } else if (isPlainObject(state)) {
+  } else if (isObject(state)) {
     return handleNodeTypes(
       modelNode,
       {
@@ -300,12 +306,12 @@ export function mapState (state, modelNode, address, fn) {
           const newState = fn(view, state, address)
           return mapState(newState, view.model, address, fn)
         },
-        [PLAIN_OBJECT]: (node) => {
+        [OBJECT]: (node) => {
           return mapValuesOrIdentity(state, (s, k) => {
             return mapState(s, get(node, k, null), addressWith(address, k), fn)
           })
         },
-        [PLAIN_ARRAY]: partial(throwContentMismatch, state),
+        [ARRAY]: partial(throwContentMismatch, state),
       },
       constant(state)
     )
@@ -377,12 +383,12 @@ function findActionCreators (modelNode, genAddress = [], table = {}) {
         const t = newTable(view, genAddress, table)
         return findActionCreators(view.model, genAddress, t)
       },
-      [PLAIN_OBJECT]: (node) => {
+      [OBJECT]: (node) => {
         return Object.keys(node).reduce((t, k) => {
           return findActionCreators(node[k], addressWith(genAddress, k), t)
         }, table)
       },
-      [PLAIN_ARRAY]: (node) => {
+      [ARRAY]: (node) => {
         return node.reduce((t, n, i) => {
           return findActionCreators(n, addressWith(genAddress, i), t)
         }, table)
@@ -409,7 +415,7 @@ function applyAddress (address, actionCreator) {
   return (...args) => {
     const actionObj = actionCreator(...args)
     // only intercept ordinary objects, not functions
-    if (isPlainObject(actionObj))
+    if (isObject(actionObj))
       return Object.assign({}, actionObj, { address })
     else
       return actionObj
@@ -519,7 +525,7 @@ function diffWithModel (modelNode, newState, oldState, address) {
     modelNode,
     {
       [OBJECT_OF]: (node, view) => {
-        const isValid = (obj, k) => isPlainObject(obj) && k in obj && obj[k] !== null
+        const isValid = (obj, k) => isObject(obj) && k in obj && obj[k] !== null
         const l = Object.assign({}, newState || {}, oldState || {})
         return mapValues(l, function (_, k) {
           const res = diffWithModel(view.model, get(newState, k, null), get(oldState, k, null),
@@ -555,13 +561,13 @@ function diffWithModel (modelNode, newState, oldState, address) {
         res[NEEDS_DESTROY] = !isValid(newState) &&   isValid(oldState)
         return res
       },
-      [PLAIN_ARRAY]: (node) => {
+      [ARRAY]: (node) => {
         return modelNode.map((v, i) => {
           return diffWithModel(v, get(newState, i, null), get(oldState, i, null),
                                addressWith(address, i))
         })
       },
-      [PLAIN_OBJECT]: (node) => {
+      [OBJECT]: (node) => {
         return mapValues(modelNode, (v, k) => {
           return diffWithModel(v, get(newState, k, null), get(oldState, k, null),
                                addressWith(address, k))
@@ -659,14 +665,14 @@ function updateWithModel (modelNode, userState, tinierState, appState,
           updateWithModel(view.model, s, t, appState, newBindings,
                           dispatch, address)
       },
-      [PLAIN_ARRAY]: (node) => {
+      [ARRAY]: (node) => {
         node.map((n, i) => {
           updateWithModel(n, userState[i], tinierState[i], appState,
                           bindings[i], dispatch,
                           addressWith(address, i))
         })
       },
-      [PLAIN_OBJECT]: (node) => {
+      [OBJECT]: (node) => {
         mapValues(node, (n, k) => {
           updateWithModel(n, userState[k], tinierState[k], appState,
                           bindings[k], dispatch,
@@ -797,11 +803,10 @@ export function createMiddleware (component) {
  * @return {Object} The API functions.
  */
 export function run (component, appEl, createStore = null, state = null) {
-  // the app model makes sure the top-level component is available to the following
-  // functions
+  // appModel is the top-level component in the following functions
   const appModel = component
 
-  // generate a combined reducer for the application
+  // Generate a combined reducer for the application
   const combinedReducer = reducerForModel(appModel)
 
   // Modify the top-level reducer to calculate the state diff and update the
