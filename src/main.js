@@ -3,11 +3,12 @@
 import MiniSignal from 'mini-signals'
 
 // constants
-export const ARRAY_OF  = '@TINIER_ARRAY_OF'
-export const OBJECT_OF = '@TINIER_OBJECT_OF'
-export const COMPONENT = '@TINIER_COMPONENT'
-export const ARRAY     = '@TINIER_ARRAY'
-export const OBJECT    = '@TINIER_OBJECT'
+export const ARRAY_OF     = '@TINIER_ARRAY_OF'
+export const OBJECT_OF    = '@TINIER_OBJECT_OF'
+export const COMPONENT    = '@TINIER_COMPONENT'
+export const ARRAY        = '@TINIER_ARRAY'
+export const OBJECT       = '@TINIER_OBJECT'
+export const STATE_OBJECT = '@TINIER_STATE_OBJECT'
 
 // basic functions
 function noop () {}
@@ -96,11 +97,23 @@ export function filter (obj, fn) {
   return isArray(obj) ? obj.filter(fn) : filterValues(obj, fn)
 }
 
-export function tagType (obj, type) {
+export function tagType (type, obj) {
+  if (typeof type !== 'string') {
+    throw new Error('First argument must be a string')
+  }
+  if (!isObject(obj)) {
+    throw new Error('Second argument must be an object')
+  }
   return { ...obj, type }
 }
 
 export function checkType (type, obj) {
+  if (typeof type !== 'string') {
+    throw new Error('First argument must be a string')
+  }
+  if (!isObject(obj)) {
+    throw new Error('Second argument must be an object')
+  }
   return get(obj, 'type', null) === type
 }
 
@@ -120,18 +133,19 @@ export function handleNodeTypes (node, caseFns, defaultFn) {
   if      (checkType(OBJECT_OF, node)) return caseFns[OBJECT_OF](node)
   else if (checkType(ARRAY_OF, node))  return caseFns[ARRAY_OF](node)
   else if (checkType(COMPONENT, node)) return caseFns[COMPONENT](node)
+  else if (checkType(STATE_OBJECT, node)) return caseFns[STATE_OBJECT](node)
   else if (isArray(node))              return caseFns[ARRAY](node)
   else if (isObject(node))             return caseFns[OBJECT](node)
   else                                 return defaultFn(node)
 }
 
 function throwUnrecognizedType (node) {
-  throw Error('Unrecognized node type in model: ' + node)
+  throw new Error('Unrecognized node type in model: ' + node)
 }
 
 function throwContentMismatch (state, node, ...args) {
-  throw Error('Content shape does not match state shape: ' + node +
-              ' <-> Array ' + state)
+  throw new Error('Content shape does not match state shape: ' + node +
+                  ' <-> Array ' + state)
 }
 
 // -------------------------------------------------------------------
@@ -142,37 +156,64 @@ function throwContentMismatch (state, node, ...args) {
  * Run lifecycle functions for the component.
  *
  * @param {Object} component
- * @param {Boolean} needsCreate
- * @param {Boolean} needsUpdate
- * @param {Boolean} needsDestroy
- * @param {Object} state - The local state.
- * @param {Object} el - The element for the child to render in.
- * @param {Object} methods - The patched method functions.
- * @param {Object} signals - Instantiated signals.
+ * @param {Object} diff
+ * @param {Object} state
+ * @param {Object} tinierState
+ * @param {Function} callReducer - A function that can call a reducer on the
+ * state for a given address.
+ * @param {Function} callMethod - A function that can call a method on the state
+ * for a given address.
  *
- * @return {Object} New bindings if needsUpdate is true. Otherwise null.
+ * @return {Object} New tinierState for this el.
  */
-export function updateEl (component, needsCreate, needsUpdate, needsDestroy,
-                          arg) {
-  if (needsDestroy) {
+export function updateEl (address, component, diff, state, tinierState,
+                          stateObject, callReducer, callMethod) {
+  // the object passed to lifecycle functions
+  const reducers = patchReducers(address, component, callReducer)
+  const methods = patchMethods(address, component, callMethod, reducers)
+  const signals = tinierState.signals
+  const el = stateObject.binding
+  const arg = { state, methods, reducers, signals, el }
+
+  // signals
+  const signalDirectives = getSignalDirectives(component, tinierState, diff)
+
+  if (diff.needsDestroy) {
     component.willUnmount(arg)
-    return null
+    return { bindings: null, signalDirectives }
   }
 
   const shouldUpdateOut = component.shouldUpdate(arg)
-  const shouldUpdate = needsCreate ||
-          ((shouldUpdateOut === null && needsUpdate) || shouldUpdateOut)
+  const shouldUpdate = diff.needsCreate ||
+          ((shouldUpdateOut === null && diff.needsUpdate) || shouldUpdateOut)
 
-  if      (needsCreate)  component.willMount(arg)
+  if      (diff.needsCreate)  component.willMount(arg)
   else if (shouldUpdate) component.willUpdate(arg)
 
   // render
-  const res = shouldUpdate ? component.render(arg) : null
+  const bindingDirectives = shouldUpdate ? component.render(arg) : null
 
-  if      (needsCreate)  component.didMount(arg)
+  if      (diff.needsCreate)  component.didMount(arg)
   else if (shouldUpdate) component.didUpdate(arg)
 
-  return res
+  return { bindingDirectives, signalDirectives }
+}
+
+/**
+ * Convert the directives in the tinierState object to signals and bindings,
+ */
+export function mergeSignalsBindings (tinierState, directives) {
+  // return handleNodeTypes(
+  //   tinierState,
+  //   {
+  //     [STATE_OBJECT]: (node) => {
+  //     },
+  //     [ARRAY]: (node) => {
+  //     },
+  //     [OBJECT]: (node) => {
+  //       return map()
+  //     }
+  //   })
 }
 
 /**
@@ -180,67 +221,44 @@ export function updateEl (component, needsCreate, needsUpdate, needsDestroy,
  *
  * @param {Array} address - The location of the component in the state.
  * @param {Object} node - A model or a node within a model.
- * @param {Object} state - The user state corresponding to the model node.
  * @param {Object} diff - The diff object for this component.
- * @param {Object} signals -
- * @param {Object} bindings -
- * @param {Object} callReducer - A function that can call a reducer on the state
- * for a given address.
- * @param {Object} callMethod - A function that can call a method on the state
+ * @param {Object} state - The user state corresponding to the model node.
+ * @param {Object} tinierState -
+ * @param {Function} callReducer - A function that can call a reducer on the
+ * state for a given address.
+ * @param {Function} callMethod - A function that can call a method on the state
  * for a given address.
  */
-function updateWithModel (address, node, state, diff, signals, bindings,
-                          callReducer, callMethod) {
-  handleNodeTypes(
+function updateWithModel (address, node, diff, state, tinierState, callReducer,
+                          callMethod) {
+  const updateRecurse = ([ d, s, ts ], k) => {
+    // TODO tinierState might have more keys than bindings, userState, and
+    // modelNode, so map over tinierState.
+    const component = k ? node.component : node
+    const newAddress = k ? addressWith(address, k) : address
+    const directives = updateEl(newAddress, component, d, s, ts, callReducer,
+                                callMethod)
+    const children = updateWithModel(newAddress, component.model, d, s, ts,
+                                     callReducer, callMethod)
+    return { ...directives, children } // TODO what here?
+  }
+  const mapRecurse = node => map(node, (n, k) => {
+    return updateWithModel(addressWith(address, k), n, state[k], tinierState[k],
+                           callReducer, callMethod)
+  })
+  const directives = handleNodeTypes(
     node,
     {
-      [OBJECT_OF]: (node) => {
-        // tinierState might have more keys than bindings, userState, and
-        // modelNode, so map over tinierState.
-        zipObjects([ diff, state, bindings ]).map(([ d, s, b ], k) => {
-          const newBindings = updateEl(node.component, d, s, b, signals,
-                                       callReducer)
-          if (newBindings) {
-            updateWithModel(addressWith(address, k), node.component.model, s, d,
-                            callReducer)
-          }
-        })
-      },
-      [ARRAY_OF]: (node) => {
-        // diff might have more keys than bindings, userState, and
-        // modelNode, so map over tinierState. TODO what if diff
-        zip([ diff, state, bindings ]).map(([ d, s, b ], i) => {
-          const newBindings = updateEl(node.component, d, s, b, signals,
-                                       callReducer)
-          if (newBindings) {
-            updateWithModel(addressWith(address, i), node.component.model, s, d,
-                            callReducer)
-          }
-        })
-      },
-      [COMPONENT]: (node) => {
-        const s = state
-        const d = diff
-        const b = bindings
-        const newBindings = updateEl(node.component, d, s, b, d.signals,
-                                     callReducer)
-        if (newBindings) {
-          updateWithModel(address, node.component.model, s, d, callReducer)
-        }
-      },
-      [ARRAY]: (node) => {
-        node.map((n, i) => {
-          updateWithModel(n, userState[i], tinierState[i], bindings[i])
-        })
-      },
-      [OBJECT]: (node) => {
-        mapValues(node, (n, k) => {
-          updateWithModel(n, userState[k], tinierState[k], bindings[k])
-        })
-      }
+      [OBJECT_OF]: node => zipObjects([ diff, state, tinierState ]).map(updateRecurse),
+      [ARRAY_OF]: node => zip([ diff, state, tinierState ]).map(updateRecurse),
+      [COMPONENT]: node => updateRecurse([ state, diff, tinierState ], null),
+      [ARRAY]: mapRecurse,
+      [OBJECT]: mapRecurse,
     },
     throwUnrecognizedType
   )
+  // merge the signal directives after updating each component instance
+  return mergeSignalsBindings(tinierState, directives)
 }
 
 // -------------------------------------------------------------------
@@ -292,7 +310,7 @@ export function setState (address, object, value) {
  * view need to be created, updated, and destroyed. Also keeps track of the
  * actions for each view.
  */
-function diffWithModel (modelNode, newState, oldState) {
+export function diffWithModel (modelNode, newState, oldState) {
   return handleNodeTypes(
     modelNode,
     {
@@ -329,12 +347,12 @@ function diffWithModel (modelNode, newState, oldState) {
         return res
       },
       [ARRAY]: (node) => {
-        return modelNode.map((v, i) => {
+        return map(modelNode, (v, i) => {
           return diffWithModel(v, get(newState, i, null), get(oldState, i, null))
         })
       },
       [OBJECT]: (node) => {
-        return mapValues(modelNode, (v, k) => {
+        return map(modelNode, (v, k) => {
           return diffWithModel(v, get(newState, k, null), get(oldState, k, null))
         })
       }
@@ -387,55 +405,17 @@ export function makeChildSignals (model) {
   )
 }
 
-function getTinierState (address, object) {
+export function getTinierState (address, object) {
   return address.reduce((node, val) => {
-    return checkType(node, SIGNALS) ? node.children[val] : node[val]
+    return checkType(STATE_OBJECT, node) ? node.children[val] : node[val]
   }, object)
 }
 
-function setTinierState (address, object, value) {
+export function setTinierState (address, object, value) {
   const [ ar, last ] = tail(address)
   const parent = getTinierState(ar, object)
   parent[last] = value
 }
-
-// function initializeSignalsRaw (node, callReducer, callMethod, address = []) {
-//   // TODO run setup
-//   // TODO bindings needs to keep track of the full state tree!
-//   const tinierNodeRecurse = component => {
-//     const reducers = patchReducers(component.reducers, callReducer, address)
-//     const methods = patchMethods(component.methods, callMethod, address)
-//     const signals = makeSignals(component.signals)
-//     const childSignals = makeChildSignals(component.model)
-//     component.setup({ childSignals, signals, reducers, methods })
-//     return tagType(
-//       {
-//         signals: null,
-//         children: initializeSignals(component.model, callReducer, callMethod,
-//                                     address)
-//       },
-//       TINIER_STATE
-//     )
-//   }
-//   const mapRecurse = node => map(node, (x, k) => {
-//     initializeSignals(x, callReducer, callMethod, addressWith(address, k))
-//   })
-//   return handleNodeTypes(
-//     node,
-//     {
-//       [OBJECT_OF]: node => tinierNodeRecurse(node.component),
-//       [ARRAY_OF]: node => tinierNodeRecurse(node.component),
-//       [COMPONENT]: tinierNodeRecurse,
-//       [ARRAY]: mapRecurse,
-//       [OBJECT]: mapRecurse,
-//     },
-//     constant(null)
-//   )
-// }
-
-// function mergeSignals () {
-//   throw new Error('Not implemented')
-// }
 
 // -------------------------------------------------------------------
 // Component & run functions
@@ -450,7 +430,7 @@ function setTinierState (address, object, value) {
  * @return {Object}
  */
 export function objectOf (component) {
-  return tagType({ component }, OBJECT_OF)
+  return tagType(OBJECT_OF, { component })
 }
 
 /**
@@ -462,7 +442,7 @@ export function objectOf (component) {
  * @return {Object}
  */
 export function arrayOf (component) {
-  return tagType({ component }, ARRAY_OF)
+  return tagType(ARRAY_OF, { component })
 }
 
 /**
@@ -516,13 +496,13 @@ export function createComponent (options = {}) {
                     'model should be an array or an object literal')
   }
   // set defaults & tag
-  return tagType({ ...defaults, ...options }, COMPONENT)
+  return tagType(COMPONENT, { ...defaults, ...options })
 }
 
-function patchReducers (component, callReducer) {
+function patchReducers (address, component, callReducer) {
   return map(component.reducers, reducer => {
     return function (arg) {
-      callReducer(state, signals, bindings, callReducer, callMethod)
+      callReducer(address, component, reducer, arg)
     }
   })
 }
@@ -608,17 +588,15 @@ function buildCallReducer (state, tinierState, callReducer, callMethod) {
     const localState = getState(address, state)
     const localTinierState = getTinierState(address, tinierState)
     // run the reducer
-    const modLocalState = reducer({ ...arg, state: localState })
+    const newLocalState = reducer({ ...arg, state: localState })
     // diff and set
     // TODO make sure diffWithModel accepts top-level null
-    const diff = diffWithModel(component, modLocalState, localState)
-    const newLocalState = (localState === modLocalState ?
-                           localState : modLocalState)
+    const diff = diffWithModel(component, newLocalState, localState)
     setState(address, state, newLocalState)
     // update the components
-    const newTinierState = updateWithModel(address, component, newLocalState,
-                                           diff, localTinierState, callReducer,
-                                           callMethod)
+    const newTinierState = updateWithModel(address, component, diff,
+                                           newLocalState, localTinierState,
+                                           callReducer, callMethod)
     // TODO make sure this accepts null for signals & bindings
     setTinierState(address, tinierState, newTinierState)
   }

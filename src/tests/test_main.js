@@ -1,8 +1,8 @@
 import {
-  ARRAY_OF, OBJECT_OF, COMPONENT, ARRAY, OBJECT, get, isObject, map, filter,
-  tagType, checkType, handleNodeTypes, updateEl, addressWith, getState,
-  setState, getTinierState, setTinierState, makeSignal, makeChildSignals,
-  arrayOf, objectOf, createComponent, run,
+  ARRAY_OF, OBJECT_OF, COMPONENT, ARRAY, OBJECT, STATE_OBJECT, get, isObject,
+  map, filter, tagType, checkType, handleNodeTypes, updateEl, addressWith,
+  diffWithModel, getState, setState, makeSignal, makeChildSignals,
+  getTinierState, setTinierState, arrayOf, objectOf, createComponent, run,
 } from '../main'
 
 import { describe, it } from 'mocha'
@@ -79,7 +79,19 @@ describe('filter', () => {
 
 describe('tagType', () => {
   it('returns a new object with the type', () => {
-    assert.deepEqual(tagType({ a: 10 }, 'TAG'), { a: 10, type: 'TAG' })
+    assert.deepEqual(tagType('TAG', { a: 10 }), { a: 10, type: 'TAG' })
+  })
+
+  it('checks for invalid tag', () => {
+    assert.throws(() => {
+      tagType({ a: 10 }, { b: 20 })
+    }, 'First argument must be a string')
+  })
+
+  it('checks for object', () => {
+    assert.throws(() => {
+      tagType('TAG', 'TAG')
+    }, 'Second argument must be an object')
   })
 })
 
@@ -87,14 +99,33 @@ describe('checkType', () => {
   it('checks for a type tag', () => {
     assert.isTrue(checkType('TAG', { a: 10, type: 'TAG' }))
   })
+
+  it('checks for invalid tag', () => {
+    assert.throws(() => {
+      checkType({ a: 10 }, { b: 20 })
+    }, 'First argument must be a string')
+  })
+
+  it('checks for object', () => {
+    assert.throws(() => {
+      checkType('TAG', 'TAG')
+    }, 'Second argument must be an object')
+  })
 })
 
 describe('handleNodeTypes', () => {
   it('tests for tags', () => {
-    const result = handleNodeTypes(tagType({ a: 10 }, OBJECT_OF), {
+    const result = handleNodeTypes(tagType(OBJECT_OF, { a: 10 }), {
       [OBJECT_OF]: (node) => node.a,
     })
     assert.strictEqual(result, 10)
+  })
+})
+
+describe('diffWithModel', () => {
+  it('diffs', () => {
+  })
+  it('accepts null for old state', () => {
   })
 })
 
@@ -117,15 +148,30 @@ describe('setState', () => {
 describe('getTinierState', () => {
   it('traverses arrays, objects, and children', () => {
     // model: { child1: arrayOf(Child1({ model: { a: [ 0, Child2 ] } })) }
-    const obj = { child1: {
-      signals: [],
-      bindings: { a: [ null, TAG ] },
-      children: [
+    const obj = {
+      child1: tagType(
+        STATE_OBJECT,
         {
-          a: [ 0, { signals: [TAG], bindings: [], children: [] } ]
-        },
-      ],
-    } }
+          signals: [],
+          bindings: [
+            {
+              a: [ null, TAG ],
+            },
+          ],
+          children: [
+            {
+              a: [
+                0,
+                tagType(
+                  STATE_OBJECT,
+                  { signals: [TAG], bindings: [], children: [] }
+                ),
+              ],
+            },
+          ],
+        }
+      ),
+    }
     const address = [ 'child1', 0, 'a', 1 ]
     assert.strictEqual(getTinierState(address, obj).signals[0], TAG)
   })
@@ -134,22 +180,33 @@ describe('getTinierState', () => {
 describe('setTinierState', () => {
   it('sets an object', () => {
     // model: { child1: arrayOf(Child1({ model: { a: [ 0, Child2 ] } })) }
-    const obj = { child1: {
-      signals: [],
-      bindings: { a: [ null, TAG ] },
-      children: [
+    const obj = {
+      child1: tagType(
+        STATE_OBJECT,
         {
-          a: [ 0, { signals: [TAG], bindings: [], children: [] } ]
-        },
-      ],
-    } }
-    const address = [ 'child1', 0, 'a', 1 ]
-    const newState = {
-      signals: [TAG],
-      bindings: [TAG],
-      children: [],
+          signals: [],
+          signalDirectives: null,
+          binding: null,
+          children: [
+            {
+              a: [
+                0,
+                tagType(
+                  STATE_OBJECT,
+                  { signals: [TAG], signalDirectives: null, binding: null, children: [] }
+                ),
+              ],
+            },
+          ],
+        }
+      ),
     }
-    setState(address, obj, newState)
+    const address = [ 'child1', 0, 'a', 1 ]
+    const newState = tagType(
+      STATE_OBJECT,
+      { signals: [TAG], binding: TAG, children: [] }
+    )
+    setTinierState(address, obj, newState)
     assert.deepEqual(getTinierState(address, obj), newState)
   })
 })
