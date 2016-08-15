@@ -1,10 +1,10 @@
 import {
   ARRAY_OF, OBJECT_OF, COMPONENT, ARRAY, OBJECT, STATE, NULL, TOP, get,
-  isObject, isFunction, map, zip, filter, tagType, checkType, match, updateEl,
-  addressWith, diffWithModel, getState, setState, getTinierState,
-  setTinierState, makeOneSignalAPI, makeChildSignalsAPI, getSignalCallbacks,
-  mergeSignals, objectOf, arrayOf, createComponent, buildCallMethod,
-  buildCallReducer, run,
+  isObject, isFunction, map, reduce, zip, filter, tagType, checkType, match,
+  updateEl, addressWith, addressEqual, diffWithModel, getState, setState,
+  getTinierState, setTinierState, makeSignal, makeOneSignalAPI,
+  makeChildSignalsAPI, reduceStateChildren, getSignalCallbacks, mergeSignals,
+  objectOf, arrayOf, createComponent, makeStateCallers, run,
 } from '../main'
 
 import { describe, it } from 'mocha'
@@ -16,9 +16,7 @@ const TAG = 'TAG'
 const _state    = { [TOP]: null }
 const _bindings = { [TOP]: null }
 const _signals  = { [TOP]: null }
-const defCallMethod = buildCallMethod(_state)
-const defCallReducer = buildCallReducer(_state, _bindings, _signals,
-                                        defCallReducer, defCallMethod)
+const defStateCallers = makeStateCallers(_state, _bindings, _signals)
 const DefComponent = createComponent()
 const NestedComponent = createComponent({
   model: {
@@ -88,6 +86,20 @@ describe('map', () => {
     const arr = [ 1, 2 ]
     const res = map(arr, (x, i) => i + String(x + 1))
     assert.deepEqual([ '02', '13' ], res)
+  })
+})
+
+describe('reduce', () => {
+  it('iterates over keys for objects', () => {
+    const obj = { a: 1, b: 2 }
+    const res = reduce(obj, (accum, x, k) => accum + x, 0)
+    assert.deepEqual(res, 3)
+  })
+
+  it('iterates over indices for arrays', () => {
+    const arr = [ 1, 2 ]
+    const res = reduce(arr, (accum, x, i) => accum + x, 0)
+    assert.deepEqual(res, 3)
   })
 })
 
@@ -185,10 +197,18 @@ describe('addressWith', () => {
     const address = addressWith([ 'a', 1 ], 'b')
     assert.strictEqual(getState(address, obj), 10)
   })
+
   it('returns original if key is null', () => {
     const obj = { a: [ 0, { b: 10 } ] }
     const address = addressWith([ 'a', 1 ], null)
     assert.deepEqual(getState(address, obj), { b: 10 })
+  })
+})
+
+describe('addressEqual', () => {
+  it('compares', () => {
+    assert.isTrue(addressEqual([ 1, 2 ], [ 1, 2 ]))
+    assert.isFalse(addressEqual([ 1, 2 ], [ 1, 3 ]))
   })
 })
 
@@ -215,19 +235,27 @@ describe('getTinierState', () => {
       child1: tagType(
         STATE,
         {
-          signals: [],
-          bindings: [
-            {
-              a: [ null, TAG ],
-            },
-          ],
+          data: {
+            signals: [],
+            bindings: [
+              {
+                a: [ null, TAG ],
+              },
+            ],
+          },
           children: [
             {
               a: [
                 0,
                 tagType(
                   STATE,
-                  { signals: [TAG], bindings: [], children: [] }
+                  {
+                    data: {
+                      signals: [TAG],
+                      bindings: [],
+                    },
+                    children: []
+                  }
                 ),
               ],
             },
@@ -236,7 +264,7 @@ describe('getTinierState', () => {
       ),
     }
     const address = [ 'child1', 0, 'a', 1 ]
-    assert.strictEqual(getTinierState(address, obj).signals[0], TAG)
+    assert.strictEqual(getTinierState(address, obj).data.signals[0], TAG)
   })
 })
 
@@ -310,7 +338,7 @@ describe('diffWithModel', () => {
   it('accepts null for old state', () => {
     const model = { a: arrayOf(DefComponent) }
     const oldState = null
-    const newState = { a: [ 11, 12 ] }
+    const newState = { a: [ 11, {} ] }
     const res = diffWithModel(model, newState, oldState)
     const expect = { a: [
       tagType(STATE, {
@@ -333,8 +361,7 @@ describe('updateEl', () => {
       needsUpdate: false,
       needsDestroy: true,
     }
-    const bindings = updateEl([], DefComponent, {}, diff, EL, {},
-                              defCallReducer, defCallMethod)
+    const bindings = updateEl([], DefComponent, {}, diff, EL, defStateCallers)
     assert.isNull(bindings)
   })
 
@@ -345,8 +372,7 @@ describe('updateEl', () => {
     })
     const state = { c: {} }
     const diff = { needsCreate: false, needsUpdate: true, needsDestroy: false }
-    const bindings = updateEl([], component, state, diff, EL, {},
-                              defCallReducer, defCallMethod)
+    const bindings = updateEl([], component, state, diff, EL, defStateCallers)
     assert.deepEqual(bindings, { c: EL })
   })
 
@@ -357,8 +383,7 @@ describe('updateEl', () => {
     })
     const state = { c: {} }
     const diff = { needsCreate: true, needsUpdate: false, needsDestroy: false }
-    const bindings = updateEl([], component, state, diff, EL, {},
-                              defCallReducer, defCallMethod)
+    const bindings = updateEl([], component, state, diff, EL, defStateCallers)
     assert.deepEqual(bindings, { c: EL })
   })
 
@@ -369,8 +394,7 @@ describe('updateEl', () => {
     })
     const state = { c: {} }
     const diff = { needsCreate: true, needsUpdate: false, needsDestroy: false }
-    const bindings = updateEl([], component, state, diff, EL, {},
-                              defCallReducer, defCallMethod)
+    const bindings = updateEl([], component, state, diff, EL, defStateCallers)
     assert.strictEqual(bindings, EL)
   })
 
@@ -381,8 +405,7 @@ describe('updateEl', () => {
     })
     const state = { c: {} }
     const diff = { needsCreate: false, needsUpdate: false, needsDestroy: false }
-    const bindings = updateEl([], component, state, diff, EL, {},
-                              defCallReducer, defCallMethod)
+    const bindings = updateEl([], component, state, diff, EL, defStateCallers)
     assert.strictEqual(bindings, EL)
   })
 
@@ -393,9 +416,28 @@ describe('updateEl', () => {
     })
     const state = { c: {} }
     const diff = { needsCreate: false, needsUpdate: true, needsDestroy: false }
-    const bindings = updateEl([], component, state, diff, EL, {},
-                              defCallReducer, defCallMethod)
+    const bindings = updateEl([], component, state, diff, EL, defStateCallers)
     assert.isNull(bindings)
+  })
+})
+
+describe('makeSignal', () => {
+  it('calls multiple listeners', () => {
+    let called = 0
+    const signal = makeSignal()
+    signal.on(x => called += x, [ 'a' ])
+    signal.on(x => called += x * 2, [ 'b' ])
+    signal.call(2)
+    assert.strictEqual(called, 6)
+  })
+
+  it('detach by address', () => {
+    let called = 0
+    const signal = makeSignal()
+    signal.on(x => called += x, [ 'name' ])
+    signal.drop([ 'name' ])
+    signal.call(2)
+    assert.strictEqual(called, 0)
   })
 })
 
@@ -430,7 +472,7 @@ describe('makeOneSignalAPI', () => {
   it('accepts a new call function', () => {
     const sig = makeOneSignalAPI(false)
     let count = 0
-    sig._callFn = ({ x, y }) => { count = x + y }
+    sig._callFns = [ ({ x, y }) => { count = x + y } ]
     sig.call({ x: 20, y: 30 })
     assert.deepEqual(count, 50)
   })
@@ -470,97 +512,124 @@ describe('makeChildSignalsAPI', () => {
   })
 })
 
-// describe('getSignalCallbacks', () => {
-//   it('collects callbacks if needsCreate', () => {
-//     const diff = { needsCreate: false, needsUpdate: true, needsDestroy: false }
-//     const { signalCallbacks, childSignalCallbacks } =
-//             getSignalCallbacks([], DefComponent, diff, {}, defCallReducer,
-//                                defCallMethod)
-//   })
-
-//   it('returns nulls if not needsCreate', () => {
-//   })
-// })
+describe('reduceStateChildren', () => {
+  it('works over nested STATE', () => {
+    const obj = {
+      child1: tagType(
+        STATE,
+        {
+          data: 3,
+          children: [
+            {
+              a: [
+                0,
+                tagType(
+                  STATE,
+                  {
+                    data: 2 ,
+                    children: []
+                  }
+                ),
+              ],
+            },
+          ],
+        }
+      ),
+    }
+    const fn = (accum, data, address) => accum + data + address[0]
+    const res = reduceStateChildren(obj, fn, 0)
+    assert.deepEqual(res, '3child1')
+  })
+})
 
 describe('mergeSignals', () => {
   it('creates a new signals object', () => {
     // listener
-    let valSelf = 0
-    let valChild = 0
+    let valChild1 = ''
+    let valChild2 = 0
     let valParent = 0
 
     // components
     const Child = createComponent({
-      signalNames: [ 'callParent', 'call', 'callSelf' ],
+      signalNames: [ 'setParent', 'setChild1', 'setChild2' ],
 
       signalSetup: ({ signals, methods }) => {
-        signals.call.on(methods.call)
-        signals.callSelf.on(methods.callSelf)
+        signals.setChild1.on(methods.setChild1)
+        signals.setChild2.on(methods.setChild2)
       },
 
       methods: {
-        call: ({ v }) => { valChild = v },
-        callSelf: ({ v }) => { valSelf = v },
+        setChild1: ({ v }) => { valChild1 += v },
+        setChild2: ({ v }) => { valChild2 = v },
       },
     })
 
     const Parent = createComponent({
       model: arrayOf(Child),
 
-      signalNames: [ 'callChild' ],
+      signalNames: [ 'setChild1', 'passThrough' ],
 
       signalSetup: ({ signals, childSignals, methods }) => {
-        signals.callChild.on(childSignals.call.call)
-        childSignals.callParent.onEach(({ v, i }) => {
-          methods.call({ v: v + i })
+        signals.setChild1.on(childSignals.setChild1.call)
+        childSignals.setParent.onEach(({ v, i }) => {
+          methods.setParent({ v: v + i })
         })
+        childSignals.setParent.onEach(signals.passThrough.call)
       },
 
       methods: {
-        call: ({ v }) => { valParent = v }
+        setParent: ({ v }) => { valParent = v }
       },
     })
 
+    // CREATE
     const state    = { [TOP]: [ {}, {} ] }
     const bindings = { [TOP]: null }
     const signals  = { [TOP]: null }
     const address = [ TOP ]
-    const callMethod = buildCallMethod(state)
-    const callReducer = buildCallReducer(state, bindings, signals, callReducer, callMethod)
+    const stateCallers = makeStateCallers(state, bindings, signals)
+    const localDiff = diffWithModel(Parent, state[TOP], null)
 
     // data
-    const diff = { needsCreate: true, needsUpdate: false, needsDestroy: false }
-    const callbacks = {
-      [TOP]: tagType(STATE, {
-        data: getSignalCallbacks(address, Parent, diff, callReducer,
-                                 callMethod),
-        children: [
-          tagType(STATE, {
-            data: getSignalCallbacks(addressWith(address, 0), Child, diff,
-                                     callReducer, callMethod),
-            children: null
-          }),
-          tagType(STATE, {
-            data: getSignalCallbacks(addressWith(address, 1), Child, diff,
-                                     callReducer, callMethod),
-            children: null
-          }),
-        ]
-      })
-    }
-    const result = mergeSignals(signals, callbacks)
+    const callbacks = getSignalCallbacks(address, Parent, localDiff,
+                                         stateCallers)
+    const signals1 = mergeSignals(signals[TOP], callbacks)
 
     // callSelf
-    result[TOP].children[1].data.callSelf.dispatch({ v: 2 })
-    assert.strictEqual(valSelf, 2)
+    signals1.children[1].data.setChild2.call({ v: 2 })
+    assert.strictEqual(valChild2, 2)
 
     // callChild
-    result[TOP].data.callChild.dispatch({ v: 10 })
-    assert.strictEqual(valChild, 10)
+    signals1.data.setChild1.call({ v: 'a' })
+    assert.strictEqual(valChild1, 'aa')
 
     // callParent
-    result[TOP].children[1].data.callParent.dispatch({ v: 50 })
+    signals1.children[1].data.setParent.call({ v: 50 })
+    assert.strictEqual(valParent, 51)
+
+    // TODO UPDATE
+    const localState2 = [ ...state[TOP], {} ]
+    const localDiff2 = diffWithModel(Parent, localState2, state[TOP])
+    const callbacks2 = getSignalCallbacks(address, Parent, localDiff2,
+                                          stateCallers)
+    const signals2 = mergeSignals(signals1, callbacks2)
+    // child -> parent
+    signals2.children[2].data.setParent.call({ v: 50 })
     assert.strictEqual(valParent, 52)
+    // parent -> child
+    valChild1 = ''
+    signals2.data.setChild1.call({ v: 'a' })
+    assert.strictEqual(valChild1, 'aaa')
+
+    // TODO then DESTROY
+    const localState3 = [ state[TOP][0] ]
+    const localDiff3 = diffWithModel(Parent, localState3, localState2)
+    const callbacks3 = getSignalCallbacks(address, Parent, localDiff3,
+                                          stateCallers)
+    const signals3 = mergeSignals(signals2, callbacks3)
+    valChild1 = ''
+    signals2.data.setChild1.call({ v: 'a' })
+    assert.strictEqual(valChild1, 'a')
   })
 })
 

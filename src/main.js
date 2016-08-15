@@ -1,7 +1,5 @@
 /** @module tinier */
 
-import MiniSignal from 'mini-signals'
-
 // constants
 export const ARRAY_OF  = '@TINIER_ARRAY_OF'
 export const OBJECT_OF = '@TINIER_OBJECT_OF'
@@ -26,8 +24,12 @@ function identity (val) {
   return val
 }
 
+function last (array) {
+  return array[array.length - 1]
+}
+
 function tail (array) {
-  return [ array.slice(0, -1), array[array.length - 1] ]
+  return [ array.slice(0, -1), last(array) ]
 }
 
 function fromPairs (pairs) {
@@ -47,12 +49,14 @@ export function get (object, property, defaultValue) {
   return object && object.hasOwnProperty(property) ? object[property] : defaultValue
 }
 
+function isUndefined (object) {
+  return typeof object === 'undefined'
+}
+
 /**
  * Check if the value is an object with enumerable properties. Also returns true
  * for arrays.
- *
  * @param {*} value - The value to test.
- *
  * @return {Boolean}
  */
 export function isObject (object) {
@@ -61,9 +65,7 @@ export function isObject (object) {
 
 /**
  * Check if the object is an array
- *
  * @param {*} object - The object to test.
- *
  * @return {Boolean}
  */
 export function isArray (object) {
@@ -72,9 +74,7 @@ export function isArray (object) {
 
 /**
  * Check if the object is a function.
- *
  * @param {*} object - The object to test.
- *
  * @return {Boolean}
  */
 export function isFunction (object) {
@@ -98,10 +98,19 @@ function mapValues (obj, fn) {
  * Use map for Array and mapValues for Object.
  * @param {Object} obj - The input object or array.
  * @param {Function} fn - A function that takes the arguments (value, key/index).
- * @return {Object} A transformed object/array with values returned by the function.
+ * @return {Object} A transformed object/array with values returned by the
+ *                  function.
  */
 export function map (obj, fn) {
   return isArray(obj) ? obj.map(fn) : mapValues(obj, fn)
+}
+
+function reduceValues (obj, fn, init) {
+  return Object.keys(obj).reduce((accum, k) => fn(accum, obj[k], k), init)
+}
+
+export function reduce (obj, fn, init) {
+  return isArray(obj) ? obj.reduce(fn, init) : reduceValues(obj, fn, init)
 }
 
 function zipArrays (arrays) {
@@ -140,6 +149,10 @@ export function filterValues (object, fn) {
 
 export function filter (obj, fn) {
   return isArray(obj) ? obj.filter(fn) : filterValues(obj, fn)
+}
+
+function any (ar) {
+  return ar.reduce((accum, val) => accum || val, false)
 }
 
 export function tagType (type, obj) {
@@ -181,7 +194,7 @@ export function match (object, fns, defaultFn = throwUnrecognizedType) {
   for (let key in fns) {
     if ((key === NULL   && object === null ) ||
         (key === ARRAY  && isArray(object) ) ||
-        checkType(key, object)) {
+        (isObject(object) && checkType(key, object))) {
       return fns[key](object)
     }
   }
@@ -192,42 +205,29 @@ export function match (object, fns, defaultFn = throwUnrecognizedType) {
 }
 
 function throwUnrecognizedType (node) {
-  throw new Error('Unrecognized node type in model: ' + node)
-}
-
-function throwContentMismatch (state, node, ...args) {
-  throw new Error('Content shape does not match state shape: ' + node +
-                  ' <-> Array ' + state)
+  throw new Error('Unrecognized type in pattern matching: ' + node)
 }
 
 // -------------------------------------------------------------------
 // Update components
 // -------------------------------------------------------------------
 
-export function mergeBindings (tinierState, directives) {
-}
-
 /**
  * Run lifecycle functions for the component.
- *
- * @param {Object} address
- * @param {Object} component
- * @param {Object} diff
- * @param {Object} state
- * @param {Object} tinierState
- * @param {Function} callReducer - A function that can call a reducer on the
- * state for a given address.
- * @param {Function} callMethod - A function that can call a method on the state
- * for a given address.
- *
+ * @param {Object} address -
+ * @param {Object} component -
+ * @param {Object} state -
+ * @param {Object} diff -
+ * @param {Object} el -
+ * @param {Object} stateCallers -
  * @return {Object}
  */
-export function updateEl (address, component, state, diff, el, signals,
-                          callReducer, callMethod) {
+export function updateEl (address, component, state, diff, el, stateCallers) {
   // the object passed to lifecycle functions
-  const reducers = patchReducers(address, component, callReducer)
-  const methods = patchMethods(address, component, callMethod, reducers,
-                               signals)
+  const reducers = patchReducers(address, component, stateCallers.callReducer)
+  const signals = patchSignals(address, component, stateCallers.callSignal)
+  const methods = patchMethods(address, component, stateCallers.callMethod,
+                               reducers, signals)
   const arg = { state, methods, reducers, signals, el }
 
   if (diff.needsDestroy) {
@@ -253,45 +253,40 @@ export function updateEl (address, component, state, diff, el, signals,
 
 /**
  * Run create, update, and destroy for component. Recursive.
- *
  * @param {Array} address - The location of the component in the state.
  * @param {Object} node - A model or a node within a model.
  * @param {Object} diff - The diff object for this component.
- * @param {Object} state - The user state corresponding to the model node.
- * @param {Object} tinierState -
- * @param {Function} callReducer - A function that can call a reducer on the
- * state for a given address.
- * @param {Function} callMethod - A function that can call a method on the state
- * for a given address.
+ * @param {Object} bindings -
+ * @param {Object} stateCallers -
+ * @return {Object}
  */
-function updateComponents (address, node, state, diff, bindings, signals,
-                           callReducer, callMethod) {
-  const updateRecurse = ([ d, s, b, sig ], k) => {
+function updateComponents (address, node, state, diff, bindings, stateCallers) {
+  const updateRecurse = ([ d, s, b ], k) => {
     const component = k !== null ? node.component : node
     const newAddress = k !== null ? addressWith(address, k) : address
     const data = updateEl(newAddress, component, s, d.data, get(b, 'data', null),
-                          sig.data, callReducer, callMethod)
+                          stateCallers)
     const children = updateComponents(newAddress, component.model, s,
                                       d.children, get(b, 'children', null),
-                                      sig.children, callReducer, callMethod)
+                                      stateCallers)
     return tagType(STATE, { data, children })
   }
   const mapRecurse = node => map(node, (n, k) => {
     return updateComponents(addressWith(address, k), n, state[k], diff[k],
-                            bindings[k], signals[k], callReducer, callMethod)
+                            bindings[k], stateCallers)
   })
-  const returnedBindings = match(
+  return match(
     node,
     {
-      [OBJECT_OF]: node => zip([ diff, state, bindings, signals ]).map(updateRecurse),
-      [ARRAY_OF]:  node => zip([ diff, state, bindings, signals ]).map(updateRecurse),
-      [COMPONENT]: node => updateRecurse([ diff, state, bindings, signals ], null),
+      [OBJECT_OF]: node => zip([ diff, state, bindings ]).map(updateRecurse),
+      [ARRAY_OF]:  node => zip([ diff, state, bindings ]).map(updateRecurse),
+      [COMPONENT]: node => updateRecurse([ diff, state, bindings ], null),
       [ARRAY]:  mapRecurse,
       [OBJECT]: mapRecurse,
     })
-  // merge the returned bindings into a coherent object after updating each
-  // component instances
-  return mergeBindings(bindings, returnedBindings)
+}
+
+export function mergeBindings (bindings, bindingsUpdate) {
 }
 
 // -------------------------------------------------------------------
@@ -302,12 +297,15 @@ export function addressWith (address, key) {
   return key === null ? address : [ ...address, key ]
 }
 
+export function addressEqual (a1, a2) {
+  if (a1 === null || a2 === null || a1.length !== a2.length) return false
+  return a1.reduce((accum, v, i) => accum && v === a2[i], true)
+}
+
 /**
  * Get the value in state.
- *
  * @param {Array} address
  * @param {Object} object
- *
  * @return {*}
  */
 export function getState (address, object) {
@@ -316,11 +314,9 @@ export function getState (address, object) {
 
 /**
  * Set the value in state.
- *
  * @param {Array} address
  * @param {Object} object
  * @param {*} value
- *
  * @return {*}
  */
 export function setState (address, object, value) {
@@ -345,18 +341,16 @@ export function setTinierState (address, object, value) {
  * Walk content and diff newState and oldState. Where differences exist, update
  * the needsCreate, needsUpdate, and needsDestroy labels in the view in the
  * content.
- *
  * @param {Object} modelNode - A model or a node of a model.
  * @param {Object} newState - The new state corresponding to modelNode.
  * @param {Object|null} oldState - The old state corresponding to modelNode.
  * @param {Array} address - The current address.
- *
- * @returns {Object} An object with the same shape as modelNode that specifies which
- * view need to be created, updated, and destroyed. Also keeps track of the
- * actions for each view.
+ * @returns {Object} An object with the same shape as modelNode that specifies
+ *                   which view need to be created, updated, and destroyed. Also
+ *                   keeps track of the actions for each view.
  */
 export function diffWithModel (modelNode, newState, oldState) {
-  const mapRecurse = (node) => {
+  const mapRecurse = node => {
     return map(modelNode, (v, i) => {
       return diffWithModel(v, get(newState, i, null), get(oldState, i, null))
     })
@@ -364,7 +358,7 @@ export function diffWithModel (modelNode, newState, oldState) {
   return match(
     modelNode,
     {
-      [OBJECT_OF]: (node) => {
+      [OBJECT_OF]: node => {
         const isValid = (obj, k) => isObject(obj) && k in obj && obj[k] !== null
         const l = Object.assign({}, newState || {}, oldState || {})
         return mapValues(l, function (_, k) {
@@ -377,7 +371,7 @@ export function diffWithModel (modelNode, newState, oldState) {
           return tagType(STATE, { data, children })
         })
       },
-      [ARRAY_OF]: (node) => {
+      [ARRAY_OF]: node => {
         const isValid = (obj, i) => isArray(obj) && i < obj.length && obj[i] !== null
         const longest = Math.max(isArray(newState) ? newState.length : 0,
                                  isArray(oldState) ? oldState.length : 0)
@@ -392,7 +386,7 @@ export function diffWithModel (modelNode, newState, oldState) {
           return tagType(STATE, { data, children })
         })
       },
-      [COMPONENT]: (node) => {
+      [COMPONENT]: node => {
         const isValid = obj => obj !== null
         const data = {
           needsCreate:   isValid(newState) &&  !isValid(oldState),
@@ -404,9 +398,7 @@ export function diffWithModel (modelNode, newState, oldState) {
       },
       [ARRAY]: mapRecurse,
       [OBJECT]: mapRecurse,
-    },
-    throwUnrecognizedType
-  )
+    })
 }
 
 // -------------------------------------------------------------------
@@ -414,18 +406,46 @@ export function diffWithModel (modelNode, newState, oldState) {
 // -------------------------------------------------------------------
 
 /**
+ * Make a signal.
+ * @return {Object} A signal with attributes `on`, `call`, and `drop`.
+ */
+export function makeSignal () {
+  const res = { _onFns: [] }
+  res.on = (fn, address = null) => {
+    if (!isFunction(fn)) {
+      throw new Error('First argument to "on" must be a function')
+    }
+    if (address !== null && !isArray(address)) {
+      throw new Error('Second argument to "on" must be an array')
+    }
+    res._onFns = [ ...res._onFns, { fn, address } ]
+  }
+  res.call = (...args) => map(res._onFns, onFn => onFn.fn(...args))
+  res.drop = address => {
+    const originalLength = res._onFns.length
+    res._onFns = filter(res._onFns, onFn => !addressEqual(onFn.address, address))
+    if (originalLength === res._onFns.length) {
+      throw new Error('Callback with address "' + address + '" not found')
+    }
+  }
+  return res
+}
+
+/**
  * Create an object that with `on/onEach` and `call` attributes.
+ * @param {Boolean} isCollection -
+ * @return {Object}
  */
 export function makeOneSignalAPI (isCollection) {
   // make a `_callFn` function that will be replaced later and is the target of
   // `call`
-  const res = { _callFn: noop }
-  // call will run `_callFn`
+  const res = { _callFns: [] }
+  // call will run all functions in `_callFns`
   res.call = (...args) => {
     if (args.length > 1 || !isObject(args[0])) {
       throw new Error('Call only accepts a single object as argument.')
     }
-    res._callFn(args[0])
+    res._callFns.map(_callFn => _callFn(args[0]))
   }
   // store callbacks passed with `on` or `onEach`
   res._onFns = []
@@ -476,31 +496,103 @@ export function makeChildSignalsAPI (model) {
   )
 }
 
-export function getSignalCallbacks (address, component, diff, callReducer,
-                                    callMethod, signals) {
-  if (diff.needsCreate) {
-    const signalCallbacks = makeSignalsAPI(component.signalNames, false)
-    const childSignalCallbacks = makeChildSignalsAPI(component.model)
-    const reducers = patchReducers(address, component, callReducer)
-    const methods = patchMethods(address, component, callMethod, reducers,
-                                 signals)
+/**
+ * Reduce the direct children of the state tree.
+ * @param {Object} node - A node in a state tree.
+ * @param {Function} fn - Function with arguments (accum, object).
+ * @param {*} init -
+ * @return {*}
+ */
+export function reduceStateChildren (node, fn, init, address = []) {
+  const stateRecurse = node => fn(init, node.data, address)
+  const reduceRecurse = node => {
+    return reduce(node, (accum, n, k) => {
+      return reduceStateChildren(n, fn, accum, addressWith(address, k))
+    }, init)
+  }
+  return match(node, {
+    [STATE]: stateRecurse,
+    [ARRAY]: reduceRecurse,
+    [OBJECT]: reduceRecurse,
+  }, constant(init))
+}
+
+function signalCallbacksForComponent (address, component, diff, stateCallers) {
+  const runSignalSetup = () => {
+    const signalsAPI = makeSignalsAPI(component.signalNames, false)
+    const childSignalsAPI = makeChildSignalsAPI(component.model)
+    const reducers = patchReducers(address, component, stateCallers.callReducer)
+    const signals = patchSignals(address, component, stateCallers.callSignal)
+    const methods = patchMethods(address, component, stateCallers.callMethod,
+                                 reducers, signals)
     // cannot call signalSetup any earlier because it needs a reference to
     // `methods`, which must know the address
     component.signalSetup({
       methods,
-      signals: signalCallbacks,
-      childSignals: childSignalCallbacks
+      signals: signalsAPI,
+      childSignals: childSignalsAPI,
     })
-    return tagType(CREATE, { signalCallbacks, childSignalCallbacks})
-  } else if (diff.needsDestroy) {
+    return { signalsAPI, childSignalsAPI }
+  }
+
+  if (diff.data.needsCreate) {
+    return tagType(CREATE, { ...runSignalSetup() })
+  } else if (diff.data.needsDestroy) {
     return tagType(DESTROY, {})
   } else {
-    return tagType(UPDATE, {})
+    const { hasCreated, destroyed } = reduceStateChildren(
+      diff.children,
+      (accum, diffData, address) => {
+        const hasCreated = accum.hasCreated || diffData.needsCreate
+        const destroyed = (diffData.needsDestroy ?
+                           [ ...accum.destroyed, address ] :
+                           accum.destroyed)
+        return { hasCreated, destroyed }
+      },
+      { hasCreated: false, destroyed: [] }
+    )
+    if (hasCreated) {
+      return tagType(UPDATE, { destroyed, hasCreated, ...runSignalSetup() })
+    } else {
+      return tagType(UPDATE, { destroyed, hasCreated })
+    }
   }
+  // TODO another type UPDATE_PARENT_OF_CREATE to pass down just the childSignals
 }
 
-export function mergeSignals (signals, callbacks, upChildCallbacks = null,
-                              upChildKey = null) {
+/**
+ * Gather callback functions for signals by running signalSetup where necessary.
+ */
+export function getSignalCallbacks (address, node, diff, stateCallers) {
+  const updateRecurse = (d, k) => {
+    const component = k !== null ? node.component : node
+    const newAddress = k !== null ? addressWith(address, k) : address
+    const data = signalCallbacksForComponent(newAddress, component, d,
+                                             stateCallers)
+    const children = getSignalCallbacks(newAddress, component.model, d.children,
+                                        stateCallers)
+    return tagType(STATE, { data, children })
+  }
+  const mapRecurse = node => map(node, (n, k) => {
+    return getSignalCallbacks(addressWith(address, k), n, diff[k], stateCallers)
+  })
+  return match(node, {
+    [OBJECT_OF]: node => map(diff, updateRecurse),
+    [ARRAY_OF]:  node => map(diff, updateRecurse),
+    [COMPONENT]: node => updateRecurse(diff, null),
+    [ARRAY]:  mapRecurse,
+    [OBJECT]: mapRecurse,
+  })
+}
+
+/**
+ * Merge a signals object with signal callbacks from getSignalCallbacks.
+ * @param {Object} signals -
+ * @param {Object} callbacks -
+ * @param {Object|null} upChild -
+ * @return {Object}
+ */
+export function mergeSignals (signals, callbacks, upChild = null) {
   const updateRecurse = node => {
     // node data will be tagged with create or destroy
     return match(node.data, {
@@ -511,85 +603,80 @@ export function mergeSignals (signals, callbacks, upChildCallbacks = null,
       [CREATE]: nodeData => {
         const signalsData = get(signals, 'data', null)
         const data = map(
-          zip([signalsData, nodeData.signalCallbacks, upChildCallbacks]),
+          zip([ signalsData, nodeData.signalsAPI, get(upChild, 'callbacks', null) ]),
           ([ signal, callbackObj, upChildObj ], key) => {
             // Check if the signal already exists. Otherwise, create one.
-            // TODO replace MiniSignal with local implementation
-            const newSignal = signal === null ? new MiniSignal() : signal
+            const newSignal = signal === null ? makeSignal() : signal
 
             // For each callback, add each onFn to the signal, and set the
-            // callFn to the signal dispatch.
-            const bs = callbackObj._onFns.map(fn => {
-              // only on, not onEach, so execute the fn with no argument
-              return newSignal.add(fn())
-            })
-            callbackObj._callFn = val => newSignal.dispatch(val)
+            // callFn to the signal dispatch. Only on, not onEach, so execute
+            // the fn with no argument.
+            callbackObj._onFns.map(fn => newSignal.on(fn()))
+            callbackObj._callFns = [ val => newSignal.call(val) ]
 
             // For the childSignalCallbacks from the parent
             if (upChildObj !== null) {
-              const bsUp = upChildObj._onFns.map(fn => {
-                return newSignal.add(fn(upChildKey))
+              upChildObj._onFns.map(fn => {
+                const address = upChild.address
+                newSignal.on(fn(last(address)), address)
               })
-              upChildObj._callFn = val => newSignal.dispatch(val)
+              // TODO how to remove destroyed callFns?
+              upChildObj._callFns = [ ...upChildObj._callFns,
+                                      val => newSignal.call(val) ]
             }
-
-            // TODO save bs and bsUp somewhere
-            // bs.map(b => b.detach())
 
             return newSignal
           }
         )
         // loop through the children of signals and node
+        const nextUpChild = { callbacks: nodeData.childSignalsAPI,
+                              address: [] }
         const children = mergeSignals(get(signals, 'children', null),
-                                      node.children,
-                                      nodeData.childSignalCallbacks)
+                                      node.children, nextUpChild)
         return tagType(STATE, { data, children })
       },
-      // For update, return the existing signals
-      [UPDATE]: identity,
+      [UPDATE]: nodeData => {
+        // if there are deleted children, delete references to them
+        map(nodeData.destroyed, childAddress => {
+          map(signals.data, signal => {
+            console.log(childAddress, signal)
+            // TODO remove reference, and test
+          })
+        })
+
+        // update signals if necessary
+        if (nodeData.hasCreated) {
+          // update signals
+          const data = map(zip([ signals.data, nodeData.signalsAPI ]),
+                           ([ signal, callbackObj ], key) => {
+                             // TODO needs upChildObj here?
+                             callbackObj._onFns.map(fn => signal.on(fn()))
+                             callbackObj._callFns = [ val => signal.call(val) ]
+                             return signal
+                           })
+          const nextUpChild = { callbacks: nodeData.childSignalsAPI, address: [] }
+          const children = mergeSignals(signals.children, node.children, nextUpChild)
+          return tagType(STATE, { data, children })
+        } else {
+          const children = mergeSignals(signals.children, node.children, null)
+          return tagType(STATE, { data: signals.data, children })
+        }
+      },
     })
   }
-  const mapRecurse = node => {
-    return map(node, (n, k) => mergeSignals(get(signals, k, null), n,
-                                            get(upChildCallbacks, k, null), k))
-  }
+  const mapRecurse = node => map(node, (n, k) => {
+    const nextUpChild = (upChild !== null ?
+                         { address: addressWith(upChild.address, k),
+                           callbacks: upChild.callbacks } :
+                         null)
+    return mergeSignals(get(signals, k, null), n, nextUpChild)
+  })
   return match(callbacks, {
     [STATE]: updateRecurse,
     [ARRAY]:  mapRecurse,
     [OBJECT]: mapRecurse,
     [NULL]: identity,
   })
-}
-
-/**
- *
- */
-function updateSignals (address, node, diff, signals, callReducer, callMethod) {
-  const updateRecurse = ([ d, sig ], k) => {
-    const component = k !== null ? node.component : node
-    const newAddress = k !== null ? addressWith(address, k) : address
-    const sigData = signals !== null ? signals.data : null
-    const sigChildren = signals !== null ? signals.children : null
-    const data = getSignalCallbacks(address, component, d.data, callReducer,
-                                    callMethod, sigData)
-    const children = updateSignals(newAddress, component.model, d.children,
-                                   sigChildren, callReducer, callMethod)
-    return tagType(STATE, { data, children })
-  }
-  const mapRecurse = node => map(node, (n, k) => {
-    return updateSignals(addressWith(address, k), n, diff[k],
-                         get(signals, k, null),
-                         callReducer, callMethod)
-  })
-  const callbacks = match(node, {
-    [OBJECT_OF]: node => zip([ diff, signals ]).map(updateRecurse),
-    [ARRAY_OF]:  node => zip([ diff, signals ]).map(updateRecurse),
-    [COMPONENT]: node => updateRecurse([ diff, signals ], null),
-    [ARRAY]:  mapRecurse,
-    [OBJECT]: mapRecurse,
-  })
-  // TODO is this recursing twice?
-  return mergeSignals(signals, callbacks)
 }
 
 // -------------------------------------------------------------------
@@ -599,9 +686,7 @@ function updateSignals (address, node, diff, signals, callReducer, callMethod) {
 /**
  * Create an object representing many instances of this component, for use in a
  * tinier model.
- *
  * @param {Object} component - Tinier component.
- *
  * @return {Object}
  */
 export function objectOf (component) {
@@ -609,11 +694,9 @@ export function objectOf (component) {
 }
 
 /**
- * Create an array representing many instances of this component, for use in a tinier
- * model.
- *
+ * Create an array representing many instances of this component, for use in a
+ * tinier model.
  * @param {Object} component - Tinier component.
- *
  * @return {Object}
  */
 export function arrayOf (component) {
@@ -622,7 +705,6 @@ export function arrayOf (component) {
 
 /**
  * Create a tinier component.
- *
  * @param {Object} componentArgs - Functions defining the Tinier component.
  * @param {str} componentArgs.displayName - A name for the component.
  * @param {[str]} componentArgs.signals - An array of signal names.
@@ -633,13 +715,14 @@ export function arrayOf (component) {
  * @param {Function} componentArgs.willMount -
  * @param {Function} componentArgs.didMount -
  * @param {Function} componentArgs.shouldUpdate - Return true if the component
- * should update, false if it should not, or null to use to default behavior
- * (update when state changes).
+ *                                                should update, false if it
+ *                                                should not, or null to use to
+ *                                                default behavior (update when
+ *                                                state changes).
  * @param {Function} componentArgs.willUpdate -
  * @param {Function} componentArgs.didUpdate -
  * @param {Function} componentArgs.willUnmount -
  * @param {Function} componentArgs.render -
- *
  * @returns {Object} A tinier component.
  */
 export function createComponent (options = {}) {
@@ -668,8 +751,8 @@ export function createComponent (options = {}) {
   })
   // check model
   if (options.model && checkType(COMPONENT, options.model)) {
-    throw new Error('The model cannot be another Component. The top level of the' +
-                    'model should be an array or an object literal')
+    throw new Error('The model cannot be another Component. The top level of ' +
+                    'the model should be an array or an object literal')
   }
   // set defaults & tag
   return tagType(COMPONENT, { ...defaults, ...options })
@@ -681,6 +764,15 @@ function patchReducers (address, component, callReducer) {
       callReducer(address, component, reducer, arg)
     }
   })
+}
+
+function patchSignals (address, component, callSignal) {
+  return fromPairs(map(component.signalNames, signalName => {
+    return [
+      signalName,
+      { call: arg => callSignal(address, signalName, arg) }
+    ]
+  }))
 }
 
 /**
@@ -700,7 +792,7 @@ export function patchMethods (address, component, callMethod, reducers, signals)
   return methods
 }
 
-export function buildCallMethod (state) {
+export function makeCallMethod (state) {
   /**
    * Call a method on the local state
    * @param address
@@ -727,12 +819,20 @@ export function buildCallMethod (state) {
 }
 
 /**
+ * Return a callSignal function.
+ */
+function makeCallSignal (signals) {
+  return (address, signalName, arg) => {
+    getState(address, signals).data[signalName].call(arg)
+  }
+}
+
+/**
  * Return a new callReducer function.
  * @param state -
  * @param bindings -
  * @param signals -
- * @param callReducer -
- * @param callMethod -
+ * @param stateCallers -
  * @returns {Function} -
  *   Call a reducer on the local state
  *   @param address - A location, as an array of keys (strings and integers).
@@ -740,13 +840,12 @@ export function buildCallMethod (state) {
  *   @param reducer
  *   @param arg - An argument object.
  */
-export function buildCallReducer (state, bindings, signals, callReducer,
-                                  callMethod) {
+export function makeCallReducer (state, bindings, signals, stateCallers) {
   return (address, component, reducer, arg) => {
     // get the local state
     const localState = getState(address, state)
-    const localBindings = getTinierState(address, bindings)
-    const localSignals = getTinierState(address, signals)
+    const localBindings = getTinierState(address, bindings).data
+    const localSignals = getTinierState(address, signals).data
     // run the reducer
     const newLocalState = reducer({ ...arg, state: localState })
     // set
@@ -754,28 +853,44 @@ export function buildCallReducer (state, bindings, signals, callReducer,
     // diff
     const diff = diffWithModel(component, newLocalState, localState)
     // update the signals
-    const newSignals = updateSignals(address, component, diff, localSignals,
-                                     callReducer, callMethod)
+    const callbacks = getSignalCallbacks(address, component, diff, stateCallers)
+    const newSignals = mergeSignals(localSignals, callbacks)
     setTinierState(address, signals, newSignals)
     // update the components
-    const newBindings = updateComponents(address, component, newLocalState,
-                                         diff, localBindings, localSignals,
-                                         callReducer, callMethod)
+    const bindingsUpdate = updateComponents(address, component, newLocalState,
+                                            diff, localBindings, stateCallers)
+    // merge the returned bindings into a coherent object after updating each
+    // component instances
+    const newBindings = mergeBindings(localBindings, bindingsUpdate)
     setTinierState(address, bindings, newBindings)
   }
+}
+
+/**
+ * Return an object with functions callMethod, callSignal, and callReducer.
+ * @param {Object} state - The global state.
+ * @param {Object} bindings - The global bindings.
+ * @param {Object} signals - The global signals.
+ * @return {Object} An object with functions callMethod, callSignal, and
+ *                  callReducer.
+ */
+export function makeStateCallers (state, bindings, signals) {
+  const stateCallers = {
+    callMethod: makeCallMethod(state),
+    callSignal: makeCallSignal(signals),
+    callReducer: makeCallReducer(state, bindings, signals, stateCallers),
+  }
+  return stateCallers
 }
 
 /**
  * Run a tinier component.
  * @param {Object} component - A tinier component.
  * @param {*} appEl - An element to pass to the component's create, update, and
- * destroy methods.
- * @param {Function} createStore - A function to create a redux store. This can
- * be redux.createStore or a store with middleware generated by
- * redux.createStoreWithMiddleware.
- * @param {Object} initialState - The initial state. If null, then component.init()
- * will be called to initialize the state.
- * @return {Object} The API functions, incuding getState and getSignals.
+ *                    destroy methods.
+ * @param {Object|null} initialState - The initial state. If null, then init()
+ *                                     will be called to initialize the state.
+ * @return {Object} The API functions, incuding getState, signals, and methods.
  */
 export function run (component, appEl, initialState = null) {
   // Create variables that will store the state for the whole lifetime of the
@@ -783,21 +898,22 @@ export function run (component, appEl, initialState = null) {
   let state    = { [TOP]: null }
   let bindings = { [TOP]: null }
   let signals  = { [TOP]: null }
-  let topAddress = [ TOP ]
+  const topAddress = [ TOP ]
 
   // functions that access state, signals, and bindings
-  const callMethod = buildCallMethod(state)
-  const callReducer = buildCallReducer(state, bindings, signals, callReducer,
-                                       callMethod)
+  const stateCallers = makeStateCallers(state, bindings, signals)
 
   // first draw
-  const initReducer = () => initialState !== null ? initialState : component.init()
-  callReducer(topAddress, component, initReducer, {})
+  const initReducer = () => {
+    return initialState !== null ? initialState : component.init()
+  }
+  stateCallers.callReducer(topAddress, component, initReducer, {})
 
   // return API
   const localSignals = getTinierState(topAddress, signals).data
-  const reducers = patchReducers(topAddress, component, callReducer)
-  const methods = patchMethods(topAddress, component, callMethod, reducers,
-                               localSignals)
+  const reducers = patchReducers(topAddress, component, stateCallers.callReducer)
+  const signalsCall = patchSignals(topAddress, component, stateCallers.callSignal)
+  const methods = patchMethods(topAddress, component, stateCallers.callMethod,
+                               reducers, signalsCall)
   return { getState: () => state, signals: localSignals, methods }
 }
