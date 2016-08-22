@@ -6,7 +6,7 @@ export const OBJECT_OF = '@TINIER_OBJECT_OF'
 export const COMPONENT = '@TINIER_COMPONENT'
 export const ARRAY     = '@TINIER_ARRAY'
 export const OBJECT    = '@TINIER_OBJECT'
-export const STATE     = '@TINIER_STATE'
+export const NODE     = '@TINIER_NODE'
 export const NULL      = '@TINIER_NULL'
 export const TOP       = '@TINIER_TOP'
 export const CREATE    = '@TINIER_CREATE'
@@ -269,7 +269,7 @@ function updateComponents (address, node, state, diff, bindings, stateCallers) {
     const children = updateComponents(newAddress, component.model, s,
                                       d.children, get(b, 'children', null),
                                       stateCallers)
-    return tagType(STATE, { data, children })
+    return tagType(NODE, { data, children })
   }
   const mapRecurse = node => map(node, (n, k) => {
     return updateComponents(addressWith(address, k), n, state[k], diff[k],
@@ -327,7 +327,7 @@ export function setState (address, object, value) {
 
 export function getTinierState (address, object) {
   return address.reduce((node, val) => {
-    return checkType(STATE, node) ? node.children[val] : node[val]
+    return checkType(NODE, node) ? node.children[val] : node[val]
   }, object)
 }
 
@@ -368,7 +368,7 @@ export function diffWithModel (modelNode, newState, oldState) {
             needsDestroy: !isValid(newState, k) &&  isValid(oldState, k),
           }
           const children = diffWithModel(node.component.model, get(newState, k, null), get(oldState, k, null))
-          return tagType(STATE, { data, children })
+          return tagType(NODE, { data, children })
         })
       },
       [ARRAY_OF]: node => {
@@ -383,7 +383,7 @@ export function diffWithModel (modelNode, newState, oldState) {
             needsDestroy: !isValid(newState, i) &&   isValid(oldState, i),
           }
           const children = diffWithModel(node.component.model, get(newState, i, null), get(oldState, i, null))
-          return tagType(STATE, { data, children })
+          return tagType(NODE, { data, children })
         })
       },
       [COMPONENT]: node => {
@@ -394,7 +394,7 @@ export function diffWithModel (modelNode, newState, oldState) {
           needsDestroy: !isValid(newState) &&   isValid(oldState),
         }
         const children = diffWithModel(node.model, newState || null, oldState || null)
-        return tagType(STATE, { data, children })
+        return tagType(NODE, { data, children })
       },
       [ARRAY]: mapRecurse,
       [OBJECT]: mapRecurse,
@@ -407,27 +407,17 @@ export function diffWithModel (modelNode, newState, oldState) {
 
 /**
  * Make a signal.
- * @return {Object} A signal with attributes `on`, `call`, and `drop`.
+ * @return {Object} A signal with attributes `on` and `call`.
  */
 export function makeSignal () {
   const res = { _onFns: [] }
-  res.on = (fn, address = null) => {
+  res.on = fn => {
     if (!isFunction(fn)) {
       throw new Error('First argument to "on" must be a function')
     }
-    if (address !== null && !isArray(address)) {
-      throw new Error('Second argument to "on" must be an array')
-    }
-    res._onFns = [ ...res._onFns, { fn, address } ]
+    res._onFns = [ ...res._onFns, fn ]
   }
-  res.call = (...args) => map(res._onFns, onFn => onFn.fn(...args))
-  res.drop = address => {
-    const originalLength = res._onFns.length
-    res._onFns = filter(res._onFns, onFn => !addressEqual(onFn.address, address))
-    if (originalLength === res._onFns.length) {
-      throw new Error('Callback with address "' + address + '" not found')
-    }
-  }
+  res.call = (...args) => map(res._onFns, fn => fn(...args))
   return res
 }
 
@@ -445,7 +435,7 @@ export function makeOneSignalAPI (isCollection) {
     if (args.length > 1 || !isObject(args[0])) {
       throw new Error('Call only accepts a single object as argument.')
     }
-    res._callFns.map(_callFn => _callFn(args[0]))
+    res._callFns.map(fn => fn(args[0]))
   }
   // store callbacks passed with `on` or `onEach`
   res._onFns = []
@@ -503,180 +493,165 @@ export function makeChildSignalsAPI (model) {
  * @param {*} init -
  * @return {*}
  */
-export function reduceStateChildren (node, fn, init, address = []) {
+export function reduceChildren (node, fn, init, address = []) {
   const stateRecurse = node => fn(init, node.data, address)
   const reduceRecurse = node => {
     return reduce(node, (accum, n, k) => {
-      return reduceStateChildren(n, fn, accum, addressWith(address, k))
+      return reduceChildren(n, fn, accum, addressWith(address, k))
     }, init)
   }
   return match(node, {
-    [STATE]: stateRecurse,
+    [NODE]: stateRecurse,
     [ARRAY]: reduceRecurse,
     [OBJECT]: reduceRecurse,
   }, constant(init))
 }
 
-function signalCallbacksForComponent (address, component, diff, stateCallers) {
-  const runSignalSetup = () => {
-    const signalsAPI = makeSignalsAPI(component.signalNames, false)
-    const childSignalsAPI = makeChildSignalsAPI(component.model)
-    const reducers = patchReducers(address, component, stateCallers.callReducer)
-    const signals = patchSignals(address, component, stateCallers.callSignal)
-    const methods = patchMethods(address, component, stateCallers.callMethod,
-                                 reducers, signals)
-    // cannot call signalSetup any earlier because it needs a reference to
-    // `methods`, which must know the address
-    component.signalSetup({
-      methods,
-      signals: signalsAPI,
-      childSignals: childSignalsAPI,
-    })
-    return { signalsAPI, childSignalsAPI }
-  }
-
-  if (diff.data.needsCreate) {
-    return tagType(CREATE, { ...runSignalSetup() })
-  } else if (diff.data.needsDestroy) {
-    return tagType(DESTROY, {})
-  } else {
-    const { hasCreated, destroyed } = reduceStateChildren(
-      diff.children,
-      (accum, diffData, address) => {
-        const hasCreated = accum.hasCreated || diffData.needsCreate
-        const destroyed = (diffData.needsDestroy ?
-                           [ ...accum.destroyed, address ] :
-                           accum.destroyed)
-        return { hasCreated, destroyed }
-      },
-      { hasCreated: false, destroyed: [] }
-    )
-    if (hasCreated) {
-      return tagType(UPDATE, { destroyed, hasCreated, ...runSignalSetup() })
-    } else {
-      return tagType(UPDATE, { destroyed, hasCreated })
-    }
-  }
-  // TODO another type UPDATE_PARENT_OF_CREATE to pass down just the childSignals
-}
-
 /**
- * Gather callback functions for signals by running signalSetup where necessary.
+ * Run signalSetup with the component.
+ * @param {Object} component -
+ * @param {Array} address -
+ * @param {Object} stateCallers -
+ * @return {Object} Object with keys signalsAPI and childSignalsAPI.
  */
-export function getSignalCallbacks (address, node, diff, stateCallers) {
-  const updateRecurse = (d, k) => {
-    const component = k !== null ? node.component : node
-    const newAddress = k !== null ? addressWith(address, k) : address
-    const data = signalCallbacksForComponent(newAddress, component, d,
-                                             stateCallers)
-    const children = getSignalCallbacks(newAddress, component.model, d.children,
-                                        stateCallers)
-    return tagType(STATE, { data, children })
-  }
-  const mapRecurse = node => map(node, (n, k) => {
-    return getSignalCallbacks(addressWith(address, k), n, diff[k], stateCallers)
+function runSignalSetup (component, address, stateCallers) {
+  const signalsAPI = makeSignalsAPI(component.signalNames, false)
+  const childSignalsAPI = makeChildSignalsAPI(component.model)
+  const reducers = patchReducers(address, component, stateCallers.callReducer)
+  const signals = patchSignals(address, component, stateCallers.callSignal)
+  const methods = patchMethods(address, component, stateCallers.callMethod,
+                               reducers, signals)
+  // cannot call signalSetup any earlier because it needs a reference to
+  // `methods`, which must know the address
+  component.signalSetup({
+    methods,
+    signals: signalsAPI,
+    childSignals: childSignalsAPI,
   })
-  return match(node, {
-    [OBJECT_OF]: node => map(diff, updateRecurse),
-    [ARRAY_OF]:  node => map(diff, updateRecurse),
-    [COMPONENT]: node => updateRecurse(diff, null),
-    [ARRAY]:  mapRecurse,
-    [OBJECT]: mapRecurse,
-  })
+  return { signalsAPI, childSignalsAPI }
 }
 
 /**
- * Merge a signals object with signal callbacks from getSignalCallbacks.
- * @param {Object} signals -
- * @param {Object} callbacks -
+ * Merge a signals object with signal callbacks from signalSetup.
+ * @param {Object} node -
+ * @param {Array} address -
+ * @param {Object} diffNode -
+ * @param {Object|null} signalNode -
+ * @param {Object} stateCallers -
  * @param {Object|null} upChild -
  * @return {Object}
  */
-export function mergeSignals (signals, callbacks, upChild = null) {
-  const updateRecurse = node => {
-    // node data will be tagged with create or destroy
-    return match(node.data, {
-      // In the case of destroy, this leaf in the signals object will be null.
-      // TODO also delete references in other signals.
-      [DESTROY]: constant(null),
+export function mergeSignals (node, address, diffNode, signalNode, stateCallers,
+                              upChild = null) {
+  const updateRecurse = ([ d, s ], k) => {
+    const component = k !== null ? node.component : node
+    const newAddress = k !== null ? addressWith(address, k) : address
+    const diffData = d.data
+    const upChildObjs = get(upChild, 'callbacks', null)
+    if (diffData.needsCreate) {
       // For create, apply the callbacks
-      [CREATE]: nodeData => {
-        const signalsData = get(signals, 'data', null)
-        const data = map(
-          zip([ signalsData, nodeData.signalsAPI, get(upChild, 'callbacks', null) ]),
-          ([ signal, callbackObj, upChildObj ], key) => {
-            // Check if the signal already exists. Otherwise, create one.
-            const newSignal = signal === null ? makeSignal() : signal
+      const { signalsAPI, childSignalsAPI } = runSignalSetup(component,
+                                                             newAddress,
+                                                             stateCallers)
+      console.log(signalsAPI, upChildObjs, component, newAddress)
+      const signals = map(
+        zip([ signalsAPI, upChildObjs ]),
+        ([ callbackObj, upChildObj ], key) => {
+          const signal = makeSignal()
 
-            // For each callback, add each onFn to the signal, and set the
-            // callFn to the signal dispatch. Only on, not onEach, so execute
-            // the fn with no argument.
-            callbackObj._onFns.map(fn => newSignal.on(fn()))
-            callbackObj._callFns = [ val => newSignal.call(val) ]
+          // For each callback, add each onFn to the signal,
+          // and set the callFn to the signal dispatch. Only
+          // on, not onEach, so execute the fn with no
+          // argument.
+          callbackObj._onFns.map(fn => signal.on(fn()))
+          callbackObj._callFns = [ { fn: signal.call, address: null } ]
 
-            // For the childSignalCallbacks from the parent
-            if (upChildObj !== null) {
-              upChildObj._onFns.map(fn => {
-                const address = upChild.address
-                newSignal.on(fn(last(address)), address)
-              })
-              // TODO how to remove destroyed callFns?
-              upChildObj._callFns = [ ...upChildObj._callFns,
-                                      val => newSignal.call(val) ]
-            }
-
-            return newSignal
+          // For the childSignalCallbacks from the parent
+          if (upChildObj !== null) {
+            upChildObj._onFns.map(fn => signal.on(fn(last(upChild.address))))
+            upChildObj._callFns = [
+              ...upChildObj._callFns,
+              { fn: signal.call, address: upChild.address }
+            ]
           }
-        )
-        // loop through the children of signals and node
-        const nextUpChild = { callbacks: nodeData.childSignalsAPI,
-                              address: [] }
-        const children = mergeSignals(get(signals, 'children', null),
-                                      node.children, nextUpChild)
-        return tagType(STATE, { data, children })
-      },
-      [UPDATE]: nodeData => {
-        // if there are deleted children, delete references to them
-        map(nodeData.destroyed, childAddress => {
-          map(signals.data, signal => {
-            console.log(childAddress, signal)
-            // TODO remove reference, and test
+
+          return signal
+        }
+      )
+      const data = { signals, signalsAPI, childSignalsAPI }
+
+      // loop through the children of signals and node
+      const nextUpChild = { callbacks: childSignalsAPI, address: [] }
+      const children = mergeSignals(component.model, newAddress, d.children,
+                                    get(s, 'children', null), stateCallers,
+                                    nextUpChild)
+
+      return tagType(NODE, { data, children })
+    } else if (diffData.needsDestroy) {
+      // In the case of destroy, this leaf in the signals object will be null.
+      return null
+    } else {
+      // update
+      const { hasCreated, destroyed } = reduceChildren(
+        d.children, (accum, diffData, address) => {
+          const hasCreated = accum.hasCreated || diffData.needsCreate
+          const destroyed = (diffData.needsDestroy ?
+                             [ ...accum.destroyed, address ] :
+                             accum.destroyed)
+          return { hasCreated, destroyed }
+        }, { hasCreated: false, destroyed: [] }
+      )
+
+      // if there are deleted children, delete references to them
+      map(destroyed, childAddress => {
+        map(s.data.childSignalsAPI, obj => {
+          // remove the matching callFns
+          obj._callFns = obj._callFns.filter(({ address }) => {
+            return address !== childAddress
           })
         })
+      })
 
+      if (hasCreated) {
         // update signals if necessary
-        if (nodeData.hasCreated) {
-          // update signals
-          const data = map(zip([ signals.data, nodeData.signalsAPI ]),
-                           ([ signal, callbackObj ], key) => {
-                             // TODO needs upChildObj here?
-                             callbackObj._onFns.map(fn => signal.on(fn()))
-                             callbackObj._callFns = [ val => signal.call(val) ]
-                             return signal
-                           })
-          const nextUpChild = { callbacks: nodeData.childSignalsAPI, address: [] }
-          const children = mergeSignals(signals.children, node.children, nextUpChild)
-          return tagType(STATE, { data, children })
-        } else {
-          const children = mergeSignals(signals.children, node.children, null)
-          return tagType(STATE, { data: signals.data, children })
-        }
-      },
-    })
+        const signals = map(
+          zip([ s.data.signals, s.data.signalsAPI ]),
+          ([ signal, callbackObj ], key) => {
+            callbackObj._onFns.map(fn => signal.on(fn()))
+            callbackObj._callFns = [ { fn: signal.call, address: null } ]
+            return signal
+          }
+        )
+        const data = { signals, ...s.data }
+        const nextUpChild = { callbacks: s.data.childSignalsAPI, address: [] }
+        const children = mergeSignals(component.model, newAddress, d, s,
+                                      stateCallers, nextUpChild)
+        return tagType(NODE, { data, children })
+      } else {
+        const children = mergeSignals(component.model, newAddress, d, s,
+                                      stateCallers, null)
+        return tagType(NODE, { data: s.data, children })
+      }
+    }
   }
-  const mapRecurse = node => map(node, (n, k) => {
-    const nextUpChild = (upChild !== null ?
-                         { address: addressWith(upChild.address, k),
-                           callbacks: upChild.callbacks } :
-                         null)
-    return mergeSignals(get(signals, k, null), n, nextUpChild)
-  })
-  return match(callbacks, {
-    [STATE]: updateRecurse,
-    [ARRAY]:  mapRecurse,
-    [OBJECT]: mapRecurse,
-    [NULL]: identity,
-  })
+
+  const recurse = ([ n, d, s ], k) => {
+    const nextUpChild = upChild === null ? null : {
+      address: addressWith(upChild.address, k),
+      callbacks: upChild.callbacks
+    }
+    return mergeSignals(n, addressWith(address, k), d, s, stateCallers,
+                        nextUpChild)
+  }
+
+  return match(node, {
+    // TODO also need to zip upChild
+    [OBJECT_OF]: node => map(zip([ diffNode, signalNode ]), updateRecurse),
+    [ARRAY_OF]:  node => map(zip([ diffNode, signalNode ]), updateRecurse),
+    [COMPONENT]: node => updateRecurse([ diffNode, signalNode ], null),
+    [ARRAY]:  node => map(zip([ node, diffNode, signalNode ]), recurse),
+    [OBJECT]: node => map(zip([ node, diffNode, signalNode ]), recurse),
+  }, constant(null))
 }
 
 // -------------------------------------------------------------------
@@ -853,8 +828,8 @@ export function makeCallReducer (state, bindings, signals, stateCallers) {
     // diff
     const diff = diffWithModel(component, newLocalState, localState)
     // update the signals
-    const callbacks = getSignalCallbacks(address, component, diff, stateCallers)
-    const newSignals = mergeSignals(localSignals, callbacks)
+    const newSignals = mergeSignals(component, address, localSignals, diff,
+                                    stateCallers)
     setTinierState(address, signals, newSignals)
     // update the components
     const bindingsUpdate = updateComponents(address, component, newLocalState,
