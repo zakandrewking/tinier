@@ -435,7 +435,7 @@ export function makeOneSignalAPI (isCollection) {
     if (args.length > 1 || !isObject(args[0])) {
       throw new Error('Call only accepts a single object as argument.')
     }
-    res._callFns.map(fn => fn(args[0]))
+    res._callFns.map(({ fn }) => fn(args[0]))
   }
   // store callbacks passed with `on` or `onEach`
   res._onFns = []
@@ -487,10 +487,11 @@ export function makeChildSignalsAPI (model) {
 }
 
 /**
- * Reduce the direct children of the state tree.
- * @param {Object} node - A node in a state tree.
+ * Reduce the direct children of the tree.
+ * @param {Object} node - A node in a tree.
  * @param {Function} fn - Function with arguments (accum, object).
- * @param {*} init -
+ * @param {*} init - An initial value.
+ * @param {Array} address - The local address.
  * @return {*}
  */
 export function reduceChildren (node, fn, init, address = []) {
@@ -533,30 +534,33 @@ function runSignalSetup (component, address, stateCallers) {
 
 /**
  * Merge a signals object with signal callbacks from signalSetup.
- * @param {Object} node -
- * @param {Array} address -
- * @param {Object} diffNode -
- * @param {Object|null} signalNode -
- * @param {Object} stateCallers -
- * @param {Object|null} upChild -
- * @return {Object}
+ * @param {Object} node - A model node.
+ * @param {Array} address - The address.
+ * @param {Object} diffNode - A node in the diff tree.
+ * @param {Object|null} signalNode - A node in the existing signals tree.
+ * @param {Object} stateCallers - The object with 3 functions to modify global
+ *                                state.
+ * @param {Object|null} upChild - The childSignalsAPI object for the parent
+ *                                Component.
+ * @param {Array|null} upAddress - A local address specifying the location
+ *                                 relative to the parent Component.
+ * @return {Object} The new signals tree.
  */
 export function mergeSignals (node, address, diffNode, signalNode, stateCallers,
-                              upChild = null) {
+                              upChild = null, upAddress = null) {
   const updateRecurse = ([ d, s ], k) => {
     const component = k !== null ? node.component : node
     const newAddress = k !== null ? addressWith(address, k) : address
     const diffData = d.data
-    const upChildObjs = get(upChild, 'callbacks', null)
     if (diffData.needsCreate) {
       // For create, apply the callbacks
       const { signalsAPI, childSignalsAPI } = runSignalSetup(component,
                                                              newAddress,
                                                              stateCallers)
-      console.log(signalsAPI, upChildObjs, component, newAddress)
+      const newUpAddress = upAddress === null ? null : addressWith(upAddress, k)
       const signals = map(
-        zip([ signalsAPI, upChildObjs ]),
-        ([ callbackObj, upChildObj ], key) => {
+        zip([ signalsAPI, upChild ]),
+        ([ callbackObj, upCallbackObj ], key) => {
           const signal = makeSignal()
 
           // For each callback, add each onFn to the signal,
@@ -567,11 +571,11 @@ export function mergeSignals (node, address, diffNode, signalNode, stateCallers,
           callbackObj._callFns = [ { fn: signal.call, address: null } ]
 
           // For the childSignalCallbacks from the parent
-          if (upChildObj !== null) {
-            upChildObj._onFns.map(fn => signal.on(fn(last(upChild.address))))
-            upChildObj._callFns = [
-              ...upChildObj._callFns,
-              { fn: signal.call, address: upChild.address }
+          if (upCallbackObj !== null) {
+            upCallbackObj._onFns.map(fn => signal.on(fn(k)))
+            upCallbackObj._callFns = [
+              ...upCallbackObj._callFns,
+              { fn: signal.call, address: newUpAddress }
             ]
           }
 
@@ -581,10 +585,9 @@ export function mergeSignals (node, address, diffNode, signalNode, stateCallers,
       const data = { signals, signalsAPI, childSignalsAPI }
 
       // loop through the children of signals and node
-      const nextUpChild = { callbacks: childSignalsAPI, address: [] }
       const children = mergeSignals(component.model, newAddress, d.children,
                                     get(s, 'children', null), stateCallers,
-                                    nextUpChild)
+                                    childSignalsAPI, [])
 
       return tagType(NODE, { data, children })
     } else if (diffData.needsDestroy) {
@@ -604,53 +607,46 @@ export function mergeSignals (node, address, diffNode, signalNode, stateCallers,
 
       // if there are deleted children, delete references to them
       map(destroyed, childAddress => {
-        map(s.data.childSignalsAPI, obj => {
+        // get the right child within childSignalsAPI
+        const childSignalsAPINode = childAddress.reduce((accum, k, i) => {
+          if (k in accum) {
+            return accum[k]
+          } else if (i === childAddress.length - 1) {
+            return accum
+          } else {
+            throw new Error('Bad address ' + childAddress + ' for object ' +
+                            s.data.childSignalsAPI)
+          }
+        }, s.data.childSignalsAPI)
+        map(childSignalsAPINode, obj => {
           // remove the matching callFns
           obj._callFns = obj._callFns.filter(({ address }) => {
-            return address !== childAddress
+            return !addressEqual(address, childAddress)
           })
         })
       })
 
-      if (hasCreated) {
-        // update signals if necessary
-        const signals = map(
-          zip([ s.data.signals, s.data.signalsAPI ]),
-          ([ signal, callbackObj ], key) => {
-            callbackObj._onFns.map(fn => signal.on(fn()))
-            callbackObj._callFns = [ { fn: signal.call, address: null } ]
-            return signal
-          }
-        )
-        const data = { signals, ...s.data }
-        const nextUpChild = { callbacks: s.data.childSignalsAPI, address: [] }
-        const children = mergeSignals(component.model, newAddress, d, s,
-                                      stateCallers, nextUpChild)
-        return tagType(NODE, { data, children })
-      } else {
-        const children = mergeSignals(component.model, newAddress, d, s,
-                                      stateCallers, null)
-        return tagType(NODE, { data: s.data, children })
-      }
+      const newUpChild = hasCreated ? s.data.childSignalsAPI : null
+      const newUpAddress = hasCreated ? [] : null
+      const children = mergeSignals(component.model, newAddress, d.children,
+                                    s.children, stateCallers,
+                                    newUpChild, newUpAddress)
+      return tagType(NODE, { data: s.data, children })
     }
   }
 
-  const recurse = ([ n, d, s ], k) => {
-    const nextUpChild = upChild === null ? null : {
-      address: addressWith(upChild.address, k),
-      callbacks: upChild.callbacks
-    }
-    return mergeSignals(n, addressWith(address, k), d, s, stateCallers,
-                        nextUpChild)
+  const recurse = ([ n, d, s, u ], k) => {
+    const newAddress = addressWith(address, k)
+    const newUpAddress = upAddress === null ? null : addressWith(upAddress, k)
+    return mergeSignals(n, newAddress, d, s, stateCallers, u, newUpAddress)
   }
 
   return match(node, {
-    // TODO also need to zip upChild
     [OBJECT_OF]: node => map(zip([ diffNode, signalNode ]), updateRecurse),
     [ARRAY_OF]:  node => map(zip([ diffNode, signalNode ]), updateRecurse),
     [COMPONENT]: node => updateRecurse([ diffNode, signalNode ], null),
-    [ARRAY]:  node => map(zip([ node, diffNode, signalNode ]), recurse),
-    [OBJECT]: node => map(zip([ node, diffNode, signalNode ]), recurse),
+    [ARRAY]:  node => map(zip([ node, diffNode, signalNode, upChild ]), recurse),
+    [OBJECT]: node => map(zip([ node, diffNode, signalNode, upChild ]), recurse),
   }, constant(null))
 }
 

@@ -463,7 +463,7 @@ describe('makeOneSignalAPI', () => {
   it('accepts a new call function', () => {
     const sig = makeOneSignalAPI(false)
     let count = 0
-    sig._callFns = [ ({ x, y }) => { count = x + y } ]
+    sig._callFns = [ { fn: ({ x, y }) => count = x + y } ]
     sig.call({ x: 20, y: 30 })
     assert.deepEqual(count, 50)
   })
@@ -542,6 +542,8 @@ describe('mergeSignals', () => {
 
     // components
     const Child = createComponent({
+      displayName: 'Child',
+
       signalNames: [ 'setParent', 'setChild1', 'setChild2' ],
 
       signalSetup: ({ signals, methods }) => {
@@ -556,6 +558,8 @@ describe('mergeSignals', () => {
     })
 
     const Parent = createComponent({
+      displayName: 'Parent',
+
       model: { child: arrayOf(Child) },
 
       signalNames: [ 'setChild1', 'passThrough' ],
@@ -590,34 +594,41 @@ describe('mergeSignals', () => {
     assert.strictEqual(valChild2, 2)
 
     // callChild
-    signals1.data.setChild1.call({ v: 'a' })
+    signals1.data.signals.setChild1.call({ v: 'a' })
     assert.strictEqual(valChild1, 'aa')
 
     // callParent
-    signals1.children[1].data.setParent.call({ v: 50 })
+    signals1.children.child[1].data.signals.setParent.call({ v: 50 })
     assert.strictEqual(valParent, 51)
 
     // TODO UPDATE
-    const localState2 = { child: [ ...state[TOP], {} ] }
+    const localState2 = { child: [ ...state[TOP].child, {} ] }
     const localDiff2 = diffWithModel(Parent, localState2, state[TOP])
     const signals2 = mergeSignals(Parent, address, localDiff2, signals1,
                                   stateCallers)
+
     // child -> parent
-    signals2.children[2].data.setParent.call({ v: 50 })
+    signals2.children.child[2].data.signals.setParent.call({ v: 50 })
     assert.strictEqual(valParent, 52)
     // parent -> child
     valChild1 = ''
-    signals2.data.setChild1.call({ v: 'a' })
+    signals2.data.signals.setChild1.call({ v: 'a' })
     assert.strictEqual(valChild1, 'aaa')
+    // check callFns
+    assert.strictEqual(signals2.data.childSignalsAPI
+                       .child.setParent._callFns.length, 3)
 
-    // TODO then DESTROY
-    const localState3 = { child: [ state[TOP][0] ] }
+    // then DESTROY
+    const localState3 = { child: [ state[TOP].child[0] ] }
     const localDiff3 = diffWithModel(Parent, localState3, localState2)
     const signals3 = mergeSignals(Parent, address, localDiff3, signals2,
                                   stateCallers)
     valChild1 = ''
-    signals2.data.setChild1.call({ v: 'a' })
+    signals2.data.signals.setChild1.call({ v: 'a' })
     assert.strictEqual(valChild1, 'a')
+    // check callFns
+    assert.strictEqual(signals3.data.childSignalsAPI
+                       .child.setParent._callFns.length, 1)
   })
 })
 
