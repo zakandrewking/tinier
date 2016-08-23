@@ -243,7 +243,7 @@ export function updateEl (address, component, state, diff, el, stateCallers) {
   else if (shouldUpdate) component.willUpdate(arg)
 
   // render
-  const bindings = shouldUpdate ? component.render(arg) : null
+  const bindings = shouldUpdate ? (component.render(arg) || null) : null
 
   if      (diff.needsCreate) component.didMount(arg)
   else if (shouldUpdate) component.didUpdate(arg)
@@ -252,11 +252,36 @@ export function updateEl (address, component, state, diff, el, stateCallers) {
 }
 
 /**
+ * Add the new userBindings to the tree at bindingsNode.
+ */
+function mergeBindings (node, userBindings, bindingsNode) {
+  const updateRecurse = ([ u, b ], k) => {
+    const data = u || b
+    const children = get(b, 'children', null)
+    return tagType(NODE, { data, children })
+  }
+  const mapRecurse = node => {
+    return map(zip([ node, userBindings, bindingsNode ]),
+               ([ n, u, b ]) => mergeBindings(n, u, b))
+  }
+  return match(
+    node,
+    {
+      [OBJECT_OF]: node => zip([ userBindings, bindingsNode ]).map(updateRecurse),
+      [ARRAY_OF]:  node => zip([ userBindings, bindingsNode  ]).map(updateRecurse),
+      [COMPONENT]: node => updateRecurse([ userBindings, bindingsNode ], null),
+      [ARRAY]:  mapRecurse,
+      [OBJECT]: mapRecurse,
+    }
+  )
+}
+
+/**
  * Run create, update, and destroy for component. Recursive.
  * @param {Array} address - The location of the component in the state.
  * @param {Object} node - A model or a node within a model.
  * @param {Object} diff - The diff object for this component.
- * @param {Object} bindings -
+ * @param {Object|null} bindings -
  * @param {Object} stateCallers -
  * @return {Object}
  */
@@ -264,12 +289,13 @@ function updateComponents (address, node, state, diff, bindings, stateCallers) {
   const updateRecurse = ([ d, s, b ], k) => {
     const component = k !== null ? node.component : node
     const newAddress = k !== null ? addressWith(address, k) : address
-    const data = updateEl(newAddress, component, s, d.data, get(b, 'data', null),
-                          stateCallers)
+    const userBindings = updateEl(newAddress, component, s, d.data, b.data,
+                                  stateCallers)
+    const currBindings = userBindings === null ? b.children :
+            mergeBindings(component.model, userBindings, b.children)
     const children = updateComponents(newAddress, component.model, s,
-                                      d.children, get(b, 'children', null),
-                                      stateCallers)
-    return tagType(NODE, { data, children })
+                                      d.children, currBindings, stateCallers)
+    return tagType(NODE, { data: b.data, children })
   }
   const mapRecurse = node => map(node, (n, k) => {
     return updateComponents(addressWith(address, k), n, state[k], diff[k],
@@ -284,9 +310,6 @@ function updateComponents (address, node, state, diff, bindings, stateCallers) {
       [ARRAY]:  mapRecurse,
       [OBJECT]: mapRecurse,
     })
-}
-
-export function mergeBindings (bindings, bindingsUpdate) {
 }
 
 // -------------------------------------------------------------------
@@ -526,6 +549,7 @@ function runSignalSetup (component, address, stateCallers) {
   // `methods`, which must know the address
   component.signalSetup({
     methods,
+    reducers,
     signals: signalsAPI,
     childSignals: childSignalsAPI,
   })
@@ -794,7 +818,7 @@ export function makeCallMethod (state) {
  */
 function makeCallSignal (signals) {
   return (address, signalName, arg) => {
-    getState(address, signals).data[signalName].call(arg)
+    getState(address, signals).data.signals[signalName].call(arg)
   }
 }
 
@@ -815,8 +839,8 @@ export function makeCallReducer (state, bindings, signals, stateCallers) {
   return (address, component, reducer, arg) => {
     // get the local state
     const localState = getState(address, state)
-    const localBindings = getTinierState(address, bindings).data
-    const localSignals = getTinierState(address, signals).data
+    const localBindings = getTinierState(address, bindings)
+    const localSignals = getTinierState(address, signals)
     // run the reducer
     const newLocalState = reducer({ ...arg, state: localState })
     // set
@@ -824,15 +848,14 @@ export function makeCallReducer (state, bindings, signals, stateCallers) {
     // diff
     const diff = diffWithModel(component, newLocalState, localState)
     // update the signals
-    const newSignals = mergeSignals(component, address, localSignals, diff,
+    const newSignals = mergeSignals(component, address, diff, localSignals,
                                     stateCallers)
     setTinierState(address, signals, newSignals)
     // update the components
-    const bindingsUpdate = updateComponents(address, component, newLocalState,
-                                            diff, localBindings, stateCallers)
+    const newBindings = updateComponents(address, component, newLocalState,
+                                         diff, localBindings, stateCallers)
     // merge the returned bindings into a coherent object after updating each
     // component instances
-    const newBindings = mergeBindings(localBindings, bindingsUpdate)
     setTinierState(address, bindings, newBindings)
   }
 }
@@ -846,11 +869,11 @@ export function makeCallReducer (state, bindings, signals, stateCallers) {
  *                  callReducer.
  */
 export function makeStateCallers (state, bindings, signals) {
-  const stateCallers = {
-    callMethod: makeCallMethod(state),
-    callSignal: makeCallSignal(signals),
-    callReducer: makeCallReducer(state, bindings, signals, stateCallers),
-  }
+  const stateCallers = {}
+  stateCallers.callMethod = makeCallMethod(state)
+  stateCallers.callSignal = makeCallSignal(signals)
+  stateCallers.callReducer = makeCallReducer(state, bindings, signals,
+                                             stateCallers)
   return stateCallers
 }
 
@@ -867,7 +890,7 @@ export function run (component, appEl, initialState = null) {
   // Create variables that will store the state for the whole lifetime of the
   // application. Similar to the redux model.
   let state    = { [TOP]: null }
-  let bindings = { [TOP]: null }
+  let bindings = { [TOP]: tagType(NODE, { data: appEl, children: null }) }
   let signals  = { [TOP]: null }
   const topAddress = [ TOP ]
 
@@ -881,10 +904,10 @@ export function run (component, appEl, initialState = null) {
   stateCallers.callReducer(topAddress, component, initReducer, {})
 
   // return API
-  const localSignals = getTinierState(topAddress, signals).data
+  const localSignals = getTinierState(topAddress, signals).data.signals
   const reducers = patchReducers(topAddress, component, stateCallers.callReducer)
   const signalsCall = patchSignals(topAddress, component, stateCallers.callSignal)
   const methods = patchMethods(topAddress, component, stateCallers.callMethod,
                                reducers, signalsCall)
-  return { getState: () => state, signals: localSignals, methods }
+  return { getState: () => state[TOP], signals: localSignals, methods }
 }

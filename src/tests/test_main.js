@@ -640,45 +640,61 @@ describe('createComponent', () => {
   })
 })
 
-// describe('run', () => {
-//   it('respects binding object for create and render', (done) => {
-//     const Child = createComponent({
-//       render: ({ state, methods, el }) => {
-//         assert.strictEqual(el, EL2)
-//       },
+describe('run', () => {
+  it('respects binding object for create and render', () => {
+    const Child = createComponent({
+      init: () => ({ val: 1 }),
+      signalNames: [ 'add' ],
+      signalSetup: ({ signals, reducers }) => signals.add.on(reducers.add),
+      reducers: {
+        add: ({ state, v }) => ({ ...state, val: v })
+      },
 
-//       willMount: ({ el }) => {
-//         assert.strictEqual(el, EL2)
-//       },
+      render: ({ state, methods, el }) => {
+        assert.strictEqual(el, EL2)
+      },
 
-//       didMount: ({ el }) => {
-//         assert.strictEqual(el, EL2)
-//       },
+      willMount: ({ el }) => {
+        assert.strictEqual(el, EL2)
+      },
 
-//       shouldUpdate: () => {
-//         return true
-//       },
+      didMount: ({ el }) => {
+        assert.strictEqual(el, EL2)
+      },
 
-//       willUpdate: ({ el }) => {
-//         assert.strictEqual(el, EL2)
-//       },
+      shouldUpdate: () => {
+        return true
+      },
 
-//       didUpdate: ({ el }) => {
-//         assert.strictEqual(el, EL2)
-//         done()
-//       },
+      willUpdate: ({ el }) => {
+        assert.strictEqual(el, EL2)
+      },
 
-//       willUnmount: ({ el }) => {
-//         assert.strictEqual(el, EL2)
-//       },
-//     })
+      didUpdate: ({ el }) => {
+        assert.strictEqual(el, EL2)
+      },
 
-//     const Parent = createComponent({
-//       model: { child: Child },
-//       init: () => ({ child: Child.init() }),
-//       render: () => ({ child: EL2 }),
-//     })
+      willUnmount: ({ el }) => {
+        assert.strictEqual(el, EL2)
+      },
+    })
 
-//     run(Parent, EL)
-//   })
-// })
+    const Parent = createComponent({
+      displayName: 'Parent',
+      model: { child: Child },
+      signalNames: [ 'add' ],
+      signalSetup: ({ signals, childSignals }) => {
+        signals.add.on(childSignals.child.add.call)
+      },
+      methods: { add: ({ signals, v }) => signals.add.call({ v }) },
+      init: () => ({ child: Child.init() }),
+      render: () => ({ child: EL2 }),
+    })
+
+    const { getState, signals, methods } = run(Parent, EL)
+    signals.add.call({ v: 2 })
+    assert.strictEqual(getState().child.val, 2)
+    methods.add({ v: 3 })
+    assert.strictEqual(getState().child.val, 3)
+  })
+})
