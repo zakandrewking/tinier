@@ -5,7 +5,7 @@ import {
   getTinierState, setTinierState, makeSignal, makeOneSignalAPI,
   makeChildSignalsAPI, reduceChildren, mergeSignals, objectOf, arrayOf,
   createComponent, makeStateCallers, run,
-} from '../main'
+} from '../tinier'
 
 import { describe, it } from 'mocha'
 import { assert } from 'chai'

@@ -127,7 +127,6 @@ function flatten (arrays) {
 }
 
 function zipObjects (objects) {
-  const res = {}
   const allKeys = flatten(map(filter(objects, x => x !== null), Object.keys))
   return fromPairs(map(allKeys, k => {
     return [ k, objects.map(o => o !== null && k in o ? o[k] : null) ]

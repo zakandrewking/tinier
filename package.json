@@ -2,13 +2,9 @@
   "name": "tinier",
   "version": "0.3.0",
   "description": "Simple views and bindings to redux, with d3.js in mind",
-  "main": "lib/main.js",
+  "main": "lib/tinier.js",
   "files": [
-    "lib/",
-    "dist/tinier.js",
-    "dist/tinier.js.map",
-    "dist/tinier.min.js",
-    "dist/tinier.min.js.map"
+    "lib/"
   ],
   "repository": {
     "type": "git",
@@ -22,38 +18,17 @@
   "scripts": {
     "test": "./node_modules/.bin/mocha --compilers js:babel-register src/tests/*.js || true",
     "test-debug": "./node_modules/.bin/mocha debug --compilers js:babel-register src/tests/*.js || true",
-    "node-inspector": "./node_modules/.bin/node-inspector",
-    "test-node-inspector": "./node_modules/.bin/mocha --debug-brk --compilers js:babel-register src/tests/*.js || true",
-    "compile": "./node_modules/.bin/babel -d lib/ --ignore tests/* -s true src/",
-    "compilew": "./node_modules/.bin/babel -d lib/ --ignore tests/* -w -s true src/",
-    "bundle": "./node_modules/.bin/webpack"
+    "compile": "./node_modules/.bin/babel -d lib/ --ignore tests/* -s true src/ && ./node_modules/.bin/uglifyjs --compress --source-map lib/tinier.min.js.map --in-source-map lib/tinier.js.map -o lib/tinier.min.js -- lib/tinier.js"
   },
   "homepage": "https://github.com/zakandrewking/tinier#readme",
   "devDependencies": {
     "babel-cli": "^6.4.5",
     "babel-core": "^6.4.0",
-    "babel-loader": "^6.2.1",
-    "babel-plugin-lodash": "^2.0.1",
     "babel-plugin-transform-object-rest-spread": "^6.8.0",
     "babel-preset-es2015": "^6.3.13",
-    "babel-register": "^6.4.3",
+    "babel-register": "^6.11.6",
     "chai": "^3.4.1",
-    "flow-bin": "^0.21.0",
     "mocha": "^2.3.4",
-    "redux": "^3.0.5",
-    "webpack": "^1.12.10"
-  },
-  "dependencies": {
-    "lodash.flowright": "^3.2.1",
-    "lodash.frompairs": "^4.0.1",
-    "lodash.get": "^4.1.2",
-    "lodash.isfunction": "^3.0.8",
-    "lodash.isplainobject": "^4.0.3",
-    "lodash.mergewith": "^4.3.1",
-    "lodash.omitby": "^4.2.1",
-    "lodash.reduce": "^4.2.0",
-    "lodash.reverse": "^4.0.1",
-    "lodash.zipobject": "^4.1.2",
-    "mini-signals": "^1.1.1"
+    "uglify-js": "^2.7.3"
   }
 }
