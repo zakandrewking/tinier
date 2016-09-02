@@ -2,9 +2,9 @@
 
 Simple views and bindings to redux, with d3.js in mind
 
-Available from npmcdn:
+Available from unpkg:
 
 ```
-http://npmcdn.com/tinier/dist/tinier.js
-http://npmcdn.com/tinier/dist/tinier.min.js
+http://unpkg.com/tinier/dist/tinier.js
+http://unpkg.com/tinier/dist/tinier.min.js
 ```
