@@ -6,12 +6,9 @@ export const OBJECT_OF = '@TINIER_OBJECT_OF'
 export const COMPONENT = '@TINIER_COMPONENT'
 export const ARRAY     = '@TINIER_ARRAY'
 export const OBJECT    = '@TINIER_OBJECT'
-export const NODE     = '@TINIER_NODE'
+export const NODE      = '@TINIER_NODE'
 export const NULL      = '@TINIER_NULL'
 export const TOP       = '@TINIER_TOP'
-export const CREATE    = '@TINIER_CREATE'
-export const DESTROY   = '@TINIER_DESTROY'
-export const UPDATE    = '@TINIER_UPDATE'
 
 // basic functions
 function noop () {}
@@ -39,14 +36,17 @@ function fromPairs (pairs) {
 }
 
 /**
- * Get the property of the object, or return the default value.
- * @param {Object} object - An object.
+ * Get the property of the object or index of the array, or return the default
+ * value.
+ * @param {Object|Array} object - An object or array.
  * @param {String} property - An property of the object.
  * @param {*} defaultValue - The default if the property is not present.
  * @return {*} The value of the property or, if not present, the default value.
  */
 export function get (object, property, defaultValue) {
-  return object && object.hasOwnProperty(property) ? object[property] : defaultValue
+  return (object &&
+          typeof object !== 'string' &&
+          object.hasOwnProperty(property)) ? object[property] : defaultValue
 }
 
 function isUndefined (object) {
@@ -150,6 +150,7 @@ export function filter (obj, fn) {
   return isArray(obj) ? obj.filter(fn) : filterValues(obj, fn)
 }
 
+// TODO make this lazy
 function any (ar) {
   return ar.reduce((accum, val) => accum || val, false)
 }
@@ -212,6 +213,22 @@ function throwUnrecognizedType (node) {
 // -------------------------------------------------------------------
 
 /**
+ * Determine whether the model has any child components.
+ */
+export function hasChildren (node) {
+  return match(
+    node,
+    {
+      [ARRAY_OF]: () => true,
+      [OBJECT_OF]: () => true,
+      [COMPONENT]: () => true,
+      [ARRAY]: node => any(node.map(hasChildren)),
+      [OBJECT]: node => any(Object.keys(node).map(k => hasChildren(node[k]))),
+    }
+  )
+}
+
+/**
  * Run lifecycle functions for the component.
  * @param {Object} address -
  * @param {Object} component -
@@ -243,6 +260,11 @@ export function updateEl (address, component, state, diff, el, stateCallers) {
 
   // render
   const bindings = shouldUpdate ? (component.render(arg) || null) : null
+  // check result
+  if (shouldUpdate && bindings === null && hasChildren(component.model)) {
+    throw new Error('The render function of component ' + component.displayName +
+                    ' did not return new bindings')
+  }
 
   if      (diff.needsCreate) component.didMount(arg)
   else if (shouldUpdate) component.didUpdate(arg)
@@ -252,25 +274,58 @@ export function updateEl (address, component, state, diff, el, stateCallers) {
 
 /**
  * Add the new userBindings to the tree at bindingsNode.
+ * @param {Object} node - A model node.
+ * @param {*} state - A state node.
+ * @param {Object} userBindings - The new bindings returned by render.
+ * @param {Object|null} bindingsNode - A node in the existing bindings tree.
+ * @return {Object} The new node for the bindings tree.
  */
-function mergeBindings (node, userBindings, bindingsNode) {
-  const updateRecurse = ([ u, b ], k) => {
-    const data = u || b
-    const children = get(b, 'children', null)
+export function mergeBindings (node, state, userBindings, bindingsNode) {
+  const updateRecurse = (s, k) => {
+    const u = k === null ? userBindings : get(userBindings, k, null)
+    if (userBindings !== null && u === null) {
+      throw new Error('Shape of the bindings object does not match the model.' +
+                      'Model: ' + node + '  Bindings object: ' + userBindings)
+    }
+    const existingBinding = (k === null ? bindingsNode :
+                             get(bindingsNode, k, null))
+    const data = u || get(existingBinding, 'data', null)
+    const children = get(existingBinding, 'children', null)
     return tagType(NODE, { data, children })
   }
-  const mapRecurse = node => {
-    return map(zip([ node, userBindings, bindingsNode ]),
-               ([ n, u, b ]) => mergeBindings(n, u, b))
+  const recurse = ([ n, s ], k) => {
+    const u = get(userBindings, k, null)
+    if (userBindings !== null && u === null) {
+      throw new Error('Shape of the bindings object does not match the model. ' +
+                      'Model: ' + node + '  Bindings object: ' + userBindings)
+    }
+    return mergeBindings(n, s, u, get(bindingsNode, k, null))
   }
   return match(
     node,
     {
-      [OBJECT_OF]: node => zip([ userBindings, bindingsNode ]).map(updateRecurse),
-      [ARRAY_OF]:  node => zip([ userBindings, bindingsNode  ]).map(updateRecurse),
-      [COMPONENT]: node => updateRecurse([ userBindings, bindingsNode ], null),
-      [ARRAY]:  mapRecurse,
-      [OBJECT]: mapRecurse,
+      [OBJECT_OF]: node => {
+        // check for extra attributes
+        if (userBindings !== null
+            && any(Object.keys(userBindings).map(k => !(k in state)))) {
+          throw new Error('Shape of the bindings object does not match the ' +
+                          'model. Model: ' + node + ' Bindings object: ' +
+                          userBindings)
+        }
+        return map(state, updateRecurse)
+      },
+      [ARRAY_OF]:  node => {
+        // check array lengths
+        if (userBindings !== null && state.length !== userBindings.length) {
+          throw new Error('Shape of the bindings object does not match the ' +
+                          'model. Model: ' + node + ' Bindings object: ' +
+                          userBindings)
+        }
+        return map(state, updateRecurse)
+      },
+      [COMPONENT]: node => updateRecurse(state, null),
+      [ARRAY]:  node => map(zip([ node, state ]), recurse),
+      [OBJECT]: node => map(zip([ node, state ]), recurse),
     }
   )
 }
@@ -291,7 +346,7 @@ function updateComponents (address, node, state, diff, bindings, stateCallers) {
     const userBindings = updateEl(newAddress, component, s, d.data, b.data,
                                   stateCallers)
     const currBindings = userBindings === null ? b.children :
-            mergeBindings(component.model, userBindings, b.children)
+            mergeBindings(component.model, s, userBindings, b.children)
     const children = updateComponents(newAddress, component.model, s,
                                       d.children, currBindings, stateCallers)
     return tagType(NODE, { data: b.data, children })
@@ -362,7 +417,10 @@ export function setTinierState (address, object, value) {
 /**
  * Walk content and diff newState and oldState. Where differences exist, update
  * the needsCreate, needsUpdate, and needsDestroy labels in the view in the
- * content.
+ * content. Differences are determined by strict equality ===.
+ *
+ * TODO also check the state to make sure it's valid for this model.
+ *
  * @param {Object} modelNode - A model or a node of a model.
  * @param {Object} newState - The new state corresponding to modelNode.
  * @param {Object|null} oldState - The old state corresponding to modelNode.
@@ -372,39 +430,50 @@ export function setTinierState (address, object, value) {
  *                   keeps track of the actions for each view.
  */
 export function diffWithModel (modelNode, newState, oldState) {
-  const mapRecurse = node => {
-    return map(modelNode, (v, i) => {
-      return diffWithModel(v, get(newState, i, null), get(oldState, i, null))
-    })
-  }
   return match(
     modelNode,
     {
       [OBJECT_OF]: node => {
+        if ((!isObject(newState) || isArray(newState)) && newState !== null) {
+          throw new Error('Shape of the new state does not match the model. ' +
+                          'Model: ' + node + '  State: ' + newState)
+        }
         const isValid = (obj, k) => isObject(obj) && k in obj && obj[k] !== null
         const l = Object.assign({}, newState || {}, oldState || {})
         return mapValues(l, function (_, k) {
           const data = {
-            needsCreate:  isValid(newState, k) && !isValid(oldState, k),
-            needsUpdate:  isValid(newState, k) &&  isValid(oldState, k) && newState[k] !== oldState[k],
+            needsCreate:  isValid(newState, k)  && !isValid(oldState, k),
+            needsUpdate:  isValid(newState, k)  &&  isValid(oldState, k) &&
+                            newState[k] !== oldState[k],
             needsDestroy: !isValid(newState, k) &&  isValid(oldState, k),
           }
-          const children = diffWithModel(node.component.model, get(newState, k, null), get(oldState, k, null))
+          const children = diffWithModel(node.component.model,
+                                         get(newState, k, null),
+                                         get(oldState, k, null))
           return tagType(NODE, { data, children })
         })
       },
       [ARRAY_OF]: node => {
-        const isValid = (obj, i) => isArray(obj) && i < obj.length && obj[i] !== null
+        if (!isArray(newState) && newState !== null) {
+          throw new Error('Shape of the new state does not match the model.' +
+                          'Model: ' + node + '  State: ' + newState)
+        }
+        const isValid = (obj, i) => {
+          return isArray(obj) && i < obj.length && obj[i] !== null
+        }
         const longest = Math.max(isArray(newState) ? newState.length : 0,
                                  isArray(oldState) ? oldState.length : 0)
         const l = Array.apply(null, { length: longest })
         return l.map(function (_, i) {
           const data = {
             needsCreate:   isValid(newState, i) &&  !isValid(oldState, i),
-            needsUpdate:   isValid(newState, i) &&   isValid(oldState, i) && newState[i] !== oldState[i],
+            needsUpdate:   isValid(newState, i) &&   isValid(oldState, i) &&
+                             newState[i] !== oldState[i],
             needsDestroy: !isValid(newState, i) &&   isValid(oldState, i),
           }
-          const children = diffWithModel(node.component.model, get(newState, i, null), get(oldState, i, null))
+          const children = diffWithModel(node.component.model,
+                                         get(newState, i, null),
+                                         get(oldState, i, null))
           return tagType(NODE, { data, children })
         })
       },
@@ -412,14 +481,33 @@ export function diffWithModel (modelNode, newState, oldState) {
         const isValid = obj => obj !== null
         const data = {
           needsCreate:   isValid(newState) &&  !isValid(oldState),
-          needsUpdate:   isValid(newState) &&   isValid(oldState) && newState !== oldState,
+          needsUpdate:   isValid(newState) &&   isValid(oldState) &&
+                           newState !== oldState,
           needsDestroy: !isValid(newState) &&   isValid(oldState),
         }
-        const children = diffWithModel(node.model, newState || null, oldState || null)
+        const children = diffWithModel(node.model,
+                                       newState || null,
+                                       oldState || null)
         return tagType(NODE, { data, children })
       },
-      [ARRAY]: mapRecurse,
-      [OBJECT]: mapRecurse,
+      [ARRAY]: node => {
+        if (!isArray(newState) && newState !== null) {
+          throw new Error('Shape of the new state does not match the model.' +
+                          'Model: ' + node + '  State: ' + newState)
+        }
+        return map(node, (n, i) => {
+          return diffWithModel(n, get(newState, i, null), get(oldState, i, null))
+        })
+      },
+      [OBJECT]: node => {
+        if ((!isObject(newState) || isArray(newState)) && newState !== null) {
+          throw new Error('Shape of the new state does not match the model. ' +
+                          'Model: ' + node + '  State: ' + newState)
+        }
+        return map(node, (n, k) => {
+          return diffWithModel(n, get(newState, k, null), get(oldState, k, null))
+        })
+      },
     })
 }
 
@@ -842,10 +930,10 @@ export function makeCallReducer (state, bindings, signals, stateCallers) {
     const localSignals = getTinierState(address, signals)
     // run the reducer
     const newLocalState = reducer({ ...arg, state: localState })
-    // set
-    setState(address, state, newLocalState)
     // diff
     const diff = diffWithModel(component, newLocalState, localState)
+    // wait to set the state until after it gets checked in diffWithModel
+    setState(address, state, newLocalState)
     // update the signals
     const newSignals = mergeSignals(component, address, diff, localSignals,
                                     stateCallers)

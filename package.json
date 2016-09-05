@@ -16,9 +16,10 @@
     "url": "https://github.com/zakandrewking/tinier/issues"
   },
   "scripts": {
-    "test": "./node_modules/.bin/mocha --compilers js:babel-register src/tests/*.js || true",
-    "test-debug": "./node_modules/.bin/mocha debug --compilers js:babel-register src/tests/*.js || true",
-    "compile": "./node_modules/.bin/babel -d lib/ --ignore tests/* -s true src/ && ./node_modules/.bin/uglifyjs --compress --mangle --source-map lib/tinier.min.js.map --in-source-map lib/tinier.js.map -o lib/tinier.min.js -- lib/tinier.js"
+    "test": "./node_modules/.bin/mocha --compilers js:babel-register src/test-tinier.js || true",
+    "test-debug": "./node_modules/.bin/mocha debug --compilers js:babel-register src/test-tinier.js || true",
+    "compile": "./node_modules/.bin/babel -d lib/ --ignore test-* -s true src/ && ./node_modules/.bin/uglifyjs --compress --mangle --source-map lib/tinier.min.js.map --in-source-map lib/tinier.js.map -o lib/tinier.min.js -- lib/tinier.js",
+    "compilew": "./node_modules/.bin/babel -d lib/ --ignore test-* -w -s true src/"
   },
   "homepage": "https://github.com/zakandrewking/tinier#readme",
   "devDependencies": {
