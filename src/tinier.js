@@ -234,7 +234,8 @@ export function hasChildren (node) {
  * @param {Object} component -
  * @param {Object} state -
  * @param {Object} diff -
- * @param {Object} el -
+ * @param {Object|nul} el - The element to render in, or null if a binding was
+ *                          not provided.
  * @param {Object} stateCallers -
  * @return {Object}
  */
@@ -245,6 +246,12 @@ export function updateEl (address, component, state, diff, el, stateCallers) {
   const methods = patchMethods(address, component, stateCallers.callMethod,
                                reducers, signals)
   const arg = { state, methods, reducers, signals, el }
+
+  // warn if the el is null
+  if (el === null && component.render !== noop) {
+    console.warn('No binding provided for component ' + component.displayName +
+                 ' at [' + address.join(', ') + '].')
+  }
 
   if (diff.needsDestroy) {
     component.willUnmount(arg)
@@ -293,13 +300,9 @@ export function mergeBindings (node, state, userBindings, bindingsNode) {
     const children = get(existingBinding, 'children', null)
     return tagType(NODE, { data, children })
   }
-  const recurse = ([ n, s ], k) => {
-    const u = get(userBindings, k, null)
-    if (userBindings !== null && u === null) {
-      throw new Error('Shape of the bindings object does not match the model. ' +
-                      'Model: ' + node + '  Bindings object: ' + userBindings)
-    }
-    return mergeBindings(n, s, u, get(bindingsNode, k, null))
+  const recurse = (n, k) => {
+    return mergeBindings(n, get(state, k, null), get(userBindings, k, null),
+                         get(bindingsNode, k, null))
   }
   return match(
     node,
@@ -324,8 +327,22 @@ export function mergeBindings (node, state, userBindings, bindingsNode) {
         return map(state, updateRecurse)
       },
       [COMPONENT]: node => updateRecurse(state, null),
-      [ARRAY]:  node => map(zip([ node, state ]), recurse),
-      [OBJECT]: node => map(zip([ node, state ]), recurse),
+      [ARRAY]:  node => {
+        if (userBindings !== null && !isArray(userBindings)) {
+          throw new Error('Shape of the bindings object does not match the ' +
+                          'model. Model: ' + node + ' Bindings object: ' +
+                          userBindings)
+        }
+        return map(node, recurse)
+      },
+      [OBJECT]: node => {
+        if (userBindings !== null && isArray(userBindings)) {
+          throw new Error('Shape of the bindings object does not match the ' +
+                          'model. Model: ' + node + ' Bindings object: ' +
+                          userBindings)
+        }
+        return map(node, recurse)
+      }
     }
   )
 }
@@ -823,7 +840,7 @@ export function createComponent (options = {}) {
     willUpdate:   noop,
     didUpdate:    noop,
     willUnmount:  noop,
-    render:       constant({}),
+    render:       noop,
   }
   // check inputs
   mapValues(options, (_, k) => {

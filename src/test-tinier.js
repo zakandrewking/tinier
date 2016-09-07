@@ -578,9 +578,22 @@ describe('mergeBindings', () => {
     assert.throws(() => {
       const model = { a: arrayOf(DefComponent) }
       const state = { a: [ { x: 10 } ] }
-      const userBindings = { EL1 }
+      const userBindings = { a: EL1 }
       mergeBindings(model, state, userBindings, null)
     }, /Shape of the bindings object does not match the model/)
+  })
+
+  it('no error if a binding is missing', () => {
+    // not every component needs a binding
+    const model = { a: DefComponent, b: DefComponent }
+    const state = { a: { x: 10 }, b: { x: 20 } }
+    const userBindings = { a: EL1 }
+    const res = mergeBindings(model, state, userBindings, null)
+    const expect = {
+      a: tagType(NODE, { data: EL1, children: null }),
+      b: tagType(NODE, { data: null, children: null }),
+    }
+    assert.deepEqual(res, expect)
   })
 
   it('errors if bindings shape does not match -- arrayOf', () => {
