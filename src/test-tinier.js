@@ -30,10 +30,10 @@ const NestedComponent = createComponent({
 })
 
 describe('get', () => {
-  it('gets a value from an object with a default return value', () => {
+  it('gets a value from an object with a default return value null', () => {
     const object = { a: 10 }
-    assert.strictEqual(get(object, 'a', 20), 10)
-    assert.strictEqual(get(object, 'b', 20), 20)
+    assert.strictEqual(get(object, 'a'), 10)
+    assert.isNull(get(object, 'b'))
   })
 
   it('gets array indices', () => {
@@ -42,10 +42,10 @@ describe('get', () => {
   })
 
   it('default for null, undefined, true, false', () => {
-    assert.strictEqual(get(null, 'b', 20), 20)
-    assert.strictEqual(get(undefined, 'b', 20), 20)
-    assert.strictEqual(get(true, 'b', 20), 20)
-    assert.strictEqual(get(false, 'b', 20), 20)
+    assert.isNull(get(null, 'b'))
+    assert.isNull(get(undefined, 'b'))
+    assert.isNull(get(true, 'b'))
+    assert.isNull(get(false, 'b'))
   })
 
   it('gives null for strings', () => {
@@ -282,12 +282,29 @@ describe('setTinierState', () => {
           data: { signals: [] },
           children: [ { a: [
             0,
-            tagType(NODE, { data: { signals: [ TAG ] }, children: [] }),
           ] } ],
         }
       ),
     }
     const address = [ 'child1', 0, 'a', 1 ]
+    const newState = tagType(NODE, { data: { signals: [ TAG ] }, children: [] })
+    setTinierState(address, obj, newState)
+    assert.strictEqual(getTinierState(address, obj), newState)
+  })
+
+  it('sets signals at children', () => {
+    // model: { child1: Child1({ model: { child2: DefComponent } }) }
+    const obj = {
+      child1: tagType(
+        NODE,
+        {
+          data: { signals: [] },
+          children: {
+            child2: tagType(NODE, { data: { signals: [] }, children: null }),
+          },
+        }),
+    }
+    const address = [ 'child1', 'child2' ]
     const newState = tagType(NODE, { data: { signals: [ TAG ] }, children: [] })
     setTinierState(address, obj, newState)
     assert.deepEqual(getTinierState(address, obj), newState)
@@ -804,7 +821,7 @@ describe('mergeSignals', () => {
     signals1.children.child[1].data.signals.setParent.call({ v: 50 })
     assert.strictEqual(valParent, 51)
 
-    // TODO UPDATE
+    // UPDATE
     const localState2 = { child: [ ...state[TOP].child, {} ] }
     const localDiff2 = diffWithModel(Parent, localState2, state[TOP])
     const signals2 = mergeSignals(Parent, address, localDiff2, signals1,

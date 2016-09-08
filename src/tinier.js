@@ -1,5 +1,7 @@
 /** @module tinier */
 
+const VERBOSE = false
+
 // constants
 export const ARRAY_OF  = '@TINIER_ARRAY_OF'
 export const OBJECT_OF = '@TINIER_OBJECT_OF'
@@ -40,13 +42,12 @@ function fromPairs (pairs) {
  * value.
  * @param {Object|Array} object - An object or array.
  * @param {String} property - An property of the object.
- * @param {*} defaultValue - The default if the property is not present.
  * @return {*} The value of the property or, if not present, the default value.
  */
-export function get (object, property, defaultValue) {
+export function get (object, property) {
   return (object &&
           typeof object !== 'string' &&
-          object.hasOwnProperty(property)) ? object[property] : defaultValue
+          object.hasOwnProperty(property)) ? object[property] : null
 }
 
 function isUndefined (object) {
@@ -114,7 +115,8 @@ export function reduce (obj, fn, init) {
 }
 
 function zipArrays (arrays) {
-  const lenLongest = Math.max.apply(null, map(filter(arrays, x => x !== null), a => a.length))
+  const lenLongest = Math.max.apply(null, map(filter(arrays, x => x !== null),
+                                              a => a.length))
   const res = []
   for (let i = 0; i < lenLongest; i++) {
     res.push(map(arrays, a => a !== null && i < a.length ? a[i] : null))
@@ -175,7 +177,7 @@ export function checkType (type, obj) {
   if (!isObject(obj)) {
     throw new Error('Second argument must be an object or null')
   }
-  return get(obj, 'type', null) === type
+  return get(obj, 'type') === type
 }
 
 /**
@@ -235,7 +237,7 @@ export function hasChildren (node) {
  * @param {Object} state -
  * @param {Object} diff -
  * @param {Object|nul} el - The element to render in, or null if a binding was
- *                          not provided.
+ *                          not provided or if needs_destroy.
  * @param {Object} stateCallers -
  * @return {Object}
  */
@@ -248,7 +250,7 @@ export function updateEl (address, component, state, diff, el, stateCallers) {
   const arg = { state, methods, reducers, signals, el }
 
   // warn if the el is null
-  if (el === null && component.render !== noop) {
+  if (el === null && !diff.needsDestroy && component.render !== noop) {
     console.warn('No binding provided for component ' + component.displayName +
                  ' at [' + address.join(', ') + '].')
   }
@@ -264,6 +266,11 @@ export function updateEl (address, component, state, diff, el, stateCallers) {
 
   if      (diff.needsCreate) component.willMount(arg)
   else if (shouldUpdate) component.willUpdate(arg)
+
+  if (VERBOSE && shouldUpdate) {
+    console.log('Rendering ' + component.displayName + ' at [' +
+                address.join(', ') + '].')
+  }
 
   // render
   const bindings = shouldUpdate ? (component.render(arg) || null) : null
@@ -289,20 +296,20 @@ export function updateEl (address, component, state, diff, el, stateCallers) {
  */
 export function mergeBindings (node, state, userBindings, bindingsNode) {
   const updateRecurse = (s, k) => {
-    const u = k === null ? userBindings : get(userBindings, k, null)
+    const u = k === null ? userBindings : get(userBindings, k)
     if (userBindings !== null && u === null) {
       throw new Error('Shape of the bindings object does not match the model.' +
                       'Model: ' + node + '  Bindings object: ' + userBindings)
     }
     const existingBinding = (k === null ? bindingsNode :
-                             get(bindingsNode, k, null))
-    const data = u || get(existingBinding, 'data', null)
-    const children = get(existingBinding, 'children', null)
+                             get(bindingsNode, k))
+    const data = u || get(existingBinding, 'data')
+    const children = get(existingBinding, 'children')
     return tagType(NODE, { data, children })
   }
   const recurse = (n, k) => {
-    return mergeBindings(n, get(state, k, null), get(userBindings, k, null),
-                         get(bindingsNode, k, null))
+    return mergeBindings(n, get(state, k), get(userBindings, k),
+                         get(bindingsNode, k))
   }
   return match(
     node,
@@ -348,7 +355,7 @@ export function mergeBindings (node, state, userBindings, bindingsNode) {
 }
 
 /**
- * Run create, update, and destroy for component. Recursive.
+ * Run create, update, and destroy for component.
  * @param {Array} address - The location of the component in the state.
  * @param {Object} node - A model or a node within a model.
  * @param {Object} diff - The diff object for this component.
@@ -360,23 +367,36 @@ function updateComponents (address, node, state, diff, bindings, stateCallers) {
   const updateRecurse = ([ d, s, b ], k) => {
     const component = k !== null ? node.component : node
     const newAddress = k !== null ? addressWith(address, k) : address
-    const userBindings = updateEl(newAddress, component, s, d.data, b.data,
-                                  stateCallers)
-    const currBindings = userBindings === null ? b.children :
+    // Update the component. If needs_destroy, then there will not be a binding.
+    const userBindings = updateEl(newAddress, component, s, d.data,
+                                  get(b, 'data'), stateCallers)
+    // merge the bindings, preferring the new bindings
+    const currBindings = userBindings === null ? get(b, 'children') :
             mergeBindings(component.model, s, userBindings, b.children)
+    // update children
     const children = updateComponents(newAddress, component.model, s,
                                       d.children, currBindings, stateCallers)
-    return tagType(NODE, { data: b.data, children })
+    return b === null ? null : tagType(NODE, { data: b.data, children })
   }
   const mapRecurse = node => map(node, (n, k) => {
-    return updateComponents(addressWith(address, k), n, state[k], diff[k],
-                            bindings[k], stateCallers)
+    return updateComponents(addressWith(address, k), n, get(state, k),
+                            diff[k], get(bindings, k), stateCallers)
   })
   return match(
     node,
     {
-      [OBJECT_OF]: node => zip([ diff, state, bindings ]).map(updateRecurse),
-      [ARRAY_OF]:  node => zip([ diff, state, bindings ]).map(updateRecurse),
+      [OBJECT_OF]: node => {
+        return filter(
+          map(zip([ diff, state, bindings ]), updateRecurse),
+          n => n !== null
+        )
+      },
+      [ARRAY_OF]:  node => {
+        return filter(
+          map(zip([ diff, state, bindings ]), updateRecurse),
+          n => n !== null
+        )
+      },
       [COMPONENT]: node => updateRecurse([ diff, state, bindings ], null),
       [ARRAY]:  mapRecurse,
       [OBJECT]: mapRecurse,
@@ -398,9 +418,9 @@ export function addressEqual (a1, a2) {
 
 /**
  * Get the value in state.
- * @param {Array} address
- * @param {Object} object
- * @return {*}
+ * @param {Array} address -
+ * @param {Object} object -
+ * @return {*} -
  */
 export function getState (address, object) {
   return address.reduce((accum, val) => accum[val], object)
@@ -408,10 +428,9 @@ export function getState (address, object) {
 
 /**
  * Set the value in state.
- * @param {Array} address
- * @param {Object} object
- * @param {*} value
- * @return {*}
+ * @param {Array} address -
+ * @param {Object} object -
+ * @param {*} value -
  */
 export function setState (address, object, value) {
   const [ ar, last ] = tail(address)
@@ -419,16 +438,32 @@ export function setState (address, object, value) {
   parent[last] = value
 }
 
+/**
+ * Get the value at address in a tree of NODEs (signals, bindings, etc.).
+ * @param {Array} address -
+ * @param {Object} object -
+ * @return {*} value -
+ */
 export function getTinierState (address, object) {
   return address.reduce((node, val) => {
     return checkType(NODE, node) ? node.children[val] : node[val]
   }, object)
 }
 
+/**
+ * Set the value at address in a tree of NODEs (signals, bindings, etc.).
+ * @param {Array} address -
+ * @param {Object} object -
+ * @param {*} value -
+ */
 export function setTinierState (address, object, value) {
   const [ ar, last ] = tail(address)
   const parent = getTinierState(ar, object)
-  parent[last] = value
+  if (checkType(NODE, parent)) {
+    parent.children[last] = value
+  } else {
+    parent[last] = value
+  }
 }
 
 /**
@@ -465,8 +500,8 @@ export function diffWithModel (modelNode, newState, oldState) {
             needsDestroy: !isValid(newState, k) &&  isValid(oldState, k),
           }
           const children = diffWithModel(node.component.model,
-                                         get(newState, k, null),
-                                         get(oldState, k, null))
+                                         get(newState, k),
+                                         get(oldState, k))
           return tagType(NODE, { data, children })
         })
       },
@@ -489,8 +524,8 @@ export function diffWithModel (modelNode, newState, oldState) {
             needsDestroy: !isValid(newState, i) &&   isValid(oldState, i),
           }
           const children = diffWithModel(node.component.model,
-                                         get(newState, i, null),
-                                         get(oldState, i, null))
+                                         get(newState, i),
+                                         get(oldState, i))
           return tagType(NODE, { data, children })
         })
       },
@@ -513,7 +548,7 @@ export function diffWithModel (modelNode, newState, oldState) {
                           'Model: ' + node + '  State: ' + newState)
         }
         return map(node, (n, i) => {
-          return diffWithModel(n, get(newState, i, null), get(oldState, i, null))
+          return diffWithModel(n, get(newState, i), get(oldState, i))
         })
       },
       [OBJECT]: node => {
@@ -522,7 +557,7 @@ export function diffWithModel (modelNode, newState, oldState) {
                           'Model: ' + node + '  State: ' + newState)
         }
         return map(node, (n, k) => {
-          return diffWithModel(n, get(newState, k, null), get(oldState, k, null))
+          return diffWithModel(n, get(newState, k), get(oldState, k))
         })
       },
     })
@@ -714,7 +749,7 @@ export function mergeSignals (node, address, diffNode, signalNode, stateCallers,
 
       // loop through the children of signals and node
       const children = mergeSignals(component.model, newAddress, d.children,
-                                    get(s, 'children', null), stateCallers,
+                                    get(s, 'children'), stateCallers,
                                     childSignalsAPI, [])
 
       return tagType(NODE, { data, children })
@@ -858,9 +893,9 @@ export function createComponent (options = {}) {
 }
 
 function patchReducers (address, component, callReducer) {
-  return map(component.reducers, reducer => {
+  return map(component.reducers, (reducer, name) => {
     return function (arg) {
-      callReducer(address, component, reducer, arg)
+      callReducer(address, component, reducer, arg, name)
     }
   })
 }
@@ -922,7 +957,7 @@ export function makeCallMethod (state) {
  */
 function makeCallSignal (signals) {
   return (address, signalName, arg) => {
-    getState(address, signals).data.signals[signalName].call(arg)
+    getTinierState(address, signals).data.signals[signalName].call(arg)
   }
 }
 
@@ -940,13 +975,19 @@ function makeCallSignal (signals) {
  *   @param arg - An argument object.
  */
 export function makeCallReducer (state, bindings, signals, stateCallers) {
-  return (address, component, reducer, arg) => {
+  return (address, component, reducer, arg, name) => {
     // get the local state
     const localState = getState(address, state)
     const localBindings = getTinierState(address, bindings)
     const localSignals = getTinierState(address, signals)
     // run the reducer
     const newLocalState = reducer({ ...arg, state: localState })
+    if (VERBOSE) {
+      console.log('Called reducer ' + name + ' for ' + component.displayName +
+                  ' at [' + address.join(', ') + '].')
+      console.log(localState)
+      console.log(newLocalState)
+    }
     // diff
     const diff = diffWithModel(component, newLocalState, localState)
     // wait to set the state until after it gets checked in diffWithModel
