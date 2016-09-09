@@ -11,6 +11,7 @@ export const OBJECT    = '@TINIER_OBJECT'
 export const NODE      = '@TINIER_NODE'
 export const NULL      = '@TINIER_NULL'
 export const TOP       = '@TINIER_TOP'
+const FORCE_RENDER = '@TINIER_FORCE_RENDER'
 
 // basic functions
 function noop () {}
@@ -1063,4 +1064,8 @@ export function run (component, appEl, initialState = null) {
   const methods = patchMethods(topAddress, component, stateCallers.callMethod,
                                reducers, signalsCall)
   return { getState: () => state[TOP], signals: localSignals, methods }
+}
+
+export function forceRenderReducer ({ state }) {
+  return { ...state, [FORCE_RENDER]: {} }
 }
