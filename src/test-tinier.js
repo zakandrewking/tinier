@@ -839,16 +839,17 @@ describe('mergeSignals', () => {
                        .child.setParent._callFns.length, 3)
 
     // then DESTROY
-    const localState3 = { child: [ state[TOP].child[0] ] }
+    const localState3 = { child: [ state[TOP].child[1] ] }
     const localDiff3 = diffWithModel(Parent, localState3, localState2)
     const signals3 = mergeSignals(Parent, address, localDiff3, signals2,
                                   stateCallers)
     valChild1 = ''
-    signals2.data.signals.setChild1.call({ v: 'a' })
+    signals3.data.signals.setChild1.call({ v: 'a' })
     assert.strictEqual(valChild1, 'a')
     // check callFns
     assert.strictEqual(signals3.data.childSignalsAPI
                        .child.setParent._callFns.length, 1)
+    assert.strictEqual(signals3.children.child.length, 1)
   })
 })
 

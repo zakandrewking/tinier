@@ -82,6 +82,10 @@ export function isFunction (object) {
   return typeof(object) === 'function'
 }
 
+function notNull (val) {
+  return val !== null
+}
+
 /**
  * Iterate over the keys and values of an object. Uses Object.keys to find
  * iterable keys.
@@ -386,16 +390,12 @@ function updateComponents (address, node, state, diff, bindings, stateCallers) {
     node,
     {
       [OBJECT_OF]: node => {
-        return filter(
-          map(zip([ diff, state, bindings ]), updateRecurse),
-          n => n !== null
-        )
+        return filter(map(zip([ diff, state, bindings ]), updateRecurse),
+                      notNull)
       },
       [ARRAY_OF]:  node => {
-        return filter(
-          map(zip([ diff, state, bindings ]), updateRecurse),
-          n => n !== null
-        )
+        return filter(map(zip([ diff, state, bindings ]), updateRecurse),
+                      notNull)
       },
       [COMPONENT]: node => updateRecurse([ diff, state, bindings ], null),
       [ARRAY]:  mapRecurse,
@@ -633,7 +633,7 @@ function makeSignalsAPI (signalNames, isCollection) {
  */
 export function makeChildSignalsAPI (model) {
   const mapFilterRecurse = node => {
-    return filter(map(node, makeChildSignalsAPI), n => n !== null)
+    return filter(map(node, makeChildSignalsAPI), notNull)
   }
   return match(
     model,
@@ -805,8 +805,12 @@ export function mergeSignals (node, address, diffNode, signalNode, stateCallers,
   }
 
   return match(node, {
-    [OBJECT_OF]: node => map(zip([ diffNode, signalNode ]), updateRecurse),
-    [ARRAY_OF]:  node => map(zip([ diffNode, signalNode ]), updateRecurse),
+    [OBJECT_OF]: node => {
+      return filter(map(zip([ diffNode, signalNode ]), updateRecurse), notNull)
+    },
+    [ARRAY_OF]: node => {
+      return filter(map(zip([ diffNode, signalNode ]), updateRecurse), notNull)
+    },
     [COMPONENT]: node => updateRecurse([ diffNode, signalNode ], null),
     [ARRAY]:  node => map(zip([ node, diffNode, signalNode, upChild ]), recurse),
     [OBJECT]: node => map(zip([ node, diffNode, signalNode, upChild ]), recurse),
@@ -957,6 +961,10 @@ export function makeCallMethod (state) {
  */
 function makeCallSignal (signals) {
   return (address, signalName, arg) => {
+    if (VERBOSE) {
+      console.log('Called signal ' + signalName + ' at [' + address.join(', ') +
+                  '].')
+    }
     getTinierState(address, signals).data.signals[signalName].call(arg)
   }
 }
