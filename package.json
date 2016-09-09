@@ -1,7 +1,7 @@
 {
   "name": "tinier",
   "version": "0.3.0",
-  "description": "Simple views and bindings to redux, with d3.js in mind",
+  "description": "A library for building tiny, reactive, functional components. Designed with D3.js in mind.",
   "main": "lib/tinier.js",
   "files": [
     "lib/"
