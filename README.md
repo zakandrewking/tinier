@@ -1,7 +1,11 @@
-# tinier.js
+# Tinier
 
-A library for building tiny, reactive, functional components. Designed with
-D3.js in mind.
+Tinier is a library for building tiny reactive components in
+JavaScript. Designed with D3.js in mind.
+
+# Development status
+
+Tinier is Alpha software. It runs, but expect bugs and some changes to the API.
 
 # Documentation
 
@@ -42,8 +46,9 @@ run(el, MyComponent)
 
 Components render when one of the following conditions is met:
 
-- A reducer is called on the component and changes the state of the component
-- The binding for a component changes when the parent renders
+- A new instance of a component is created.
+- A reducer is called on the component AND changes the state of the component.
+- The binding for a component changes when the parent renders.
 
 To stop rendering, you can pass a function to the `shouldUpdate` option of
 `createComponent`.

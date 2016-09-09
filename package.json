@@ -1,7 +1,7 @@
 {
   "name": "tinier",
   "version": "0.3.0",
-  "description": "A library for building tiny, reactive, functional components. Designed with D3.js in mind.",
+  "description": "Tinier is a library for building tiny reactive components in JavaScript. Designed with D3.js in mind.",
   "main": "lib/tinier.js",
   "files": [
     "lib/"
