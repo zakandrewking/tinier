@@ -1,7 +1,7 @@
 import {
   ARRAY_OF, OBJECT_OF, COMPONENT, ARRAY, OBJECT, NODE, NULL, TOP, noop, get,
   isObject, isFunction, map, reduce, zip, filter, tagType, checkType, match,
-  hasChildren, updateEl, mergeBindings, addressWith, addressEqual,
+  hasChildren, checkRenderResult, updateEl, addressWith, addressEqual,
   diffWithModel, getState, setState, getTinierState, setTinierState, makeSignal,
   makeOneSignalAPI, makeChildSignalsAPI, reduceChildren, mergeSignals, objectOf,
   arrayOf, createComponent, makeStateCallers, run,
@@ -463,6 +463,53 @@ describe('hasChildren', () => {
   })
 })
 
+describe('checkRenderResult', () => {
+  it('errors if bindings shape does not match', () => {
+    assert.throws(() => {
+      const model = { a: arrayOf(DefComponent) }
+      const state = { a: [ { x: 10 } ] }
+      const userBindings = { a: EL1 }
+      checkRenderResult(userBindings, model, state)
+    }, /Shape of the bindings object does not match the model/)
+  })
+
+  it('no error if a binding is missing', () => {
+    // not every component needs a binding
+    const model = { a: DefComponent, b: DefComponent }
+    const state = { a: { x: 10 }, b: { x: 20 } }
+    const userBindings = { a: EL1 }
+    const res = checkRenderResult(userBindings, model, state)
+    assert.deepEqual(res, userBindings)
+  })
+
+  it('errors if bindings shape does not match -- arrayOf', () => {
+    assert.throws(() => {
+      const model = { a: arrayOf(DefComponent) }
+      const state = { a: [ { x: 10 } ] }
+      const userBindings = { a: EL1 }
+      checkRenderResult(userBindings, model, state)
+    }, /Shape of the bindings object does not match the model/)
+  })
+
+  it('errors if bindings shape does not match -- extra array elements', () => {
+    assert.throws(() => {
+      const model = { a: arrayOf(DefComponent) }
+      const state = { a: [ { x: 10 } ] }
+      const userBindings = { a: [ EL1, EL2 ] }
+      checkRenderResult(userBindings, model, state)
+    }, /Shape of the bindings object does not match the model/)
+  })
+
+  it('errors if bindings shape does not match -- extra attributes', () => {
+    assert.throws(() => {
+      const model = { a: objectOf(DefComponent) }
+      const state = { a: { b: { x: 10 } } }
+      const userBindings = { a: { b: EL1, c: EL2 } }
+      checkRenderResult(userBindings, model, state)
+    }, /Shape of the bindings object does not match the model/)
+  })
+})
+
 describe('updateEl', () => {
   it('returns null if needsDestroy', () => {
     const diff = {
@@ -470,7 +517,8 @@ describe('updateEl', () => {
       needsUpdate: false,
       needsDestroy: true,
     }
-    const bindings = updateEl([], DefComponent, {}, diff, EL1, defStateCallers)
+    const { bindings } = updateEl([], DefComponent, {}, diff, EL1, EL1,
+                                  defStateCallers)
     assert.isNull(bindings)
   })
 
@@ -481,7 +529,8 @@ describe('updateEl', () => {
     })
     const state = { c: {} }
     const diff = { needsCreate: false, needsUpdate: true, needsDestroy: false }
-    const bindings = updateEl([], component, state, diff, EL1, defStateCallers)
+    const { bindings } = updateEl([], component, state, diff, EL1, EL1,
+                                  defStateCallers)
     assert.deepEqual(bindings, { c: EL1 })
   })
 
@@ -492,7 +541,8 @@ describe('updateEl', () => {
     })
     const state = { c: {} }
     const diff = { needsCreate: true, needsUpdate: false, needsDestroy: false }
-    const bindings = updateEl([], component, state, diff, EL1, defStateCallers)
+    const { bindings } = updateEl([], component, state, diff, EL1, EL1,
+                                  defStateCallers)
     assert.deepEqual(bindings, { c: EL1 })
   })
 
@@ -503,19 +553,41 @@ describe('updateEl', () => {
     })
     const state = { c: {} }
     const diff = { needsCreate: true, needsUpdate: false, needsDestroy: false }
-    const bindings = updateEl([], component, state, diff, EL1, defStateCallers)
+    const { bindings } = updateEl([], component, state, diff, EL1, EL1,
+                                  defStateCallers)
     assert.strictEqual(bindings, EL1)
   })
 
-  it('shouldUpdate can force update', () => {
+  it('updates with new el', () => {
+    const component = createComponent({ render: ({ el }) => ({ a: el }) })
+    const state = { c: {} }
+    const diff = { needsCreate: false, needsUpdate: true, needsDestroy: false }
+    const { bindings, lastRenderedEl } = updateEl([], component, state, diff,
+                                                  EL1, EL2, defStateCallers)
+    assert.deepEqual(bindings, { a: EL2 })
+    assert.strictEqual(lastRenderedEl, EL2)
+  })
+
+  it('old el can be null', () => {
+    const component = createComponent({ render: ({ el }) => ({ a: el }) })
+    const state = { c: {} }
+    const diff = { needsCreate: false, needsUpdate: true, needsDestroy: false }
+    const { bindings, lastRenderedEl } = updateEl([], component, state, diff,
+                                                  null, EL1, defStateCallers)
+    assert.deepEqual(bindings, { a: EL1 })
+    assert.strictEqual(lastRenderedEl, EL1)
+  })
+
+  it('shouldUpdate cannot force update', () => {
     const component = createComponent({
       render: ({ el }) => el,
       shouldUpdate: () => true,
     })
     const state = { c: {} }
     const diff = { needsCreate: false, needsUpdate: false, needsDestroy: false }
-    const bindings = updateEl([], component, state, diff, EL1, defStateCallers)
-    assert.strictEqual(bindings, EL1)
+    const { bindings } = updateEl([], component, state, diff, EL1, EL1,
+                                  defStateCallers)
+    assert.isNull(bindings)
   })
 
   it('shouldUpdate can stop update', () => {
@@ -525,119 +597,9 @@ describe('updateEl', () => {
     })
     const state = { c: {} }
     const diff = { needsCreate: false, needsUpdate: true, needsDestroy: false }
-    const bindings = updateEl([], component, state, diff, EL1, defStateCallers)
+    const { bindings } = updateEl([], component, state, diff, EL1, EL1,
+                                  defStateCallers)
     assert.isNull(bindings)
-  })
-})
-
-describe('mergeBindings', () => {
-  it('walks model and bindings, and overwrites old bindings', () => {
-    const model = { a: arrayOf(DefComponent) }
-    const state = { a: [ { x: 10 }, { x: 20 } ] }
-    const userBindings = { a: [ EL1, EL2 ] }
-    const bindingsTree = { a: [
-      tagType(NODE, { data: EL1, children: null }),
-    ] }
-    const res = mergeBindings(model, state, userBindings, bindingsTree)
-    const expect = { a: [
-      tagType(NODE, { data: EL1, children: null }),
-      tagType(NODE, { data: EL2, children: null }),
-    ] }
-    assert.deepEqual(res, expect)
-  })
-
-  it('works with just a child component', () => {
-    const model = { a: DefComponent }
-    const state = { a: { x: 10 } }
-    const userBindings = { a: EL1 }
-    const res = mergeBindings(model, state, userBindings, null)
-    const expect = { a: tagType(NODE, { data: EL1, children: null }) }
-    assert.deepEqual(res, expect)
-  })
-
-  it('falls back on old bindings', () => {
-    const model = { a: arrayOf(DefComponent) }
-    const state = { a: [ { x: 10 }, { x: 20 } ] }
-    const bindingsTree = { a: [
-      tagType(NODE, { data: EL1, children: null }),
-      tagType(NODE, { data: EL2, children: null }),
-    ] }
-    const res = mergeBindings(model, state, null, bindingsTree)
-    assert.deepEqual(res, bindingsTree)
-  })
-
-  it('falls back on old bindings -- nested', () => {
-    const Child  = createComponent({ model: { z: DefComponent } })
-    const model = { a: arrayOf(Child) }
-    const state = { a: [ { x: { z: 10 } }, { x: { z: 20 } } ] }
-    const userBindings = { a: [ 'E', 'F' ] }
-    const bindingsTree = { a: [
-      tagType(NODE, { data: 'A', children: {
-        z: tagType(NODE, { data: 'B', children: null }),
-      } }),
-      tagType(NODE, { data: 'C', children: {
-        z: tagType(NODE, { data: 'D', children: null }),
-      } }),
-    ] }
-    const res = mergeBindings(model, state, userBindings, bindingsTree)
-    const expect = { a: [
-      tagType(NODE, { data: 'E', children: {
-        z: tagType(NODE, { data: 'B', children: null }),
-      } }),
-      tagType(NODE, { data: 'F', children: {
-        z: tagType(NODE, { data: 'D', children: null }),
-      } }),
-    ] }
-    assert.deepEqual(res, expect)
-  })
-
-  it('errors if bindings shape does not match', () => {
-    assert.throws(() => {
-      const model = { a: arrayOf(DefComponent) }
-      const state = { a: [ { x: 10 } ] }
-      const userBindings = { a: EL1 }
-      mergeBindings(model, state, userBindings, null)
-    }, /Shape of the bindings object does not match the model/)
-  })
-
-  it('no error if a binding is missing', () => {
-    // not every component needs a binding
-    const model = { a: DefComponent, b: DefComponent }
-    const state = { a: { x: 10 }, b: { x: 20 } }
-    const userBindings = { a: EL1 }
-    const res = mergeBindings(model, state, userBindings, null)
-    const expect = {
-      a: tagType(NODE, { data: EL1, children: null }),
-      b: tagType(NODE, { data: null, children: null }),
-    }
-    assert.deepEqual(res, expect)
-  })
-
-  it('errors if bindings shape does not match -- arrayOf', () => {
-    assert.throws(() => {
-      const model = { a: arrayOf(DefComponent) }
-      const state = { a: [ { x: 10 } ] }
-      const userBindings = { a: EL1 }
-      mergeBindings(model, state, userBindings, null)
-    }, /Shape of the bindings object does not match the model/)
-  })
-
-  it('errors if bindings shape does not match -- extra array elements', () => {
-    assert.throws(() => {
-      const model = { a: arrayOf(DefComponent) }
-      const state = { a: [ { x: 10 } ] }
-      const userBindings = { a: [ EL1, EL2 ] }
-      mergeBindings(model, state, userBindings, null)
-    }, /Shape of the bindings object does not match the model/)
-  })
-
-  it('errors if bindings shape does not match -- extra attributes', () => {
-    assert.throws(() => {
-      const model = { a: objectOf(DefComponent) }
-      const state = { a: { b: { x: 10 } } }
-      const userBindings = { a: { b: EL1, c: EL2 } }
-      mergeBindings(model, state, userBindings, null)
-    }, /Shape of the bindings object does not match the model/)
   })
 })
 

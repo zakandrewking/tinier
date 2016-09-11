@@ -39,7 +39,7 @@ The `run` function binds a Tinier component to the DOM and renders it.
 
 ```javascript
 var el = document.getElementById('my-container')
-run(el, MyComponent)
+run(MyComponent, el)
 ```
 
 ## Lifecycle

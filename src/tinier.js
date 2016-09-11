@@ -235,88 +235,18 @@ export function hasChildren (node) {
   )
 }
 
-/**
- * Run lifecycle functions for the component.
- * @param {Object} address -
- * @param {Object} component -
- * @param {Object} state -
- * @param {Object} diff -
- * @param {Object|nul} el - The element to render in, or null if a binding was
- *                          not provided or if needs_destroy.
- * @param {Object} stateCallers -
- * @return {Object}
- */
-export function updateEl (address, component, state, diff, el, stateCallers) {
-  // the object passed to lifecycle functions
-  const reducers = patchReducers(address, component, stateCallers.callReducer)
-  const signals = patchSignals(address, component, stateCallers.callSignal)
-  const methods = patchMethods(address, component, stateCallers.callMethod,
-                               reducers, signals)
-  const arg = { state, methods, reducers, signals, el }
-
-  // warn if the el is null
-  if (el === null && !diff.needsDestroy && component.render !== noop) {
-    console.warn('No binding provided for component ' + component.displayName +
-                 ' at [' + address.join(', ') + '].')
-  }
-
-  if (diff.needsDestroy) {
-    component.willUnmount(arg)
-    return null
-  }
-
-  const shouldUpdateOut = component.shouldUpdate(arg)
-  const shouldUpdate = diff.needsCreate ||
-          ((shouldUpdateOut === null && diff.needsUpdate) || shouldUpdateOut)
-
-  if      (diff.needsCreate) component.willMount(arg)
-  else if (shouldUpdate) component.willUpdate(arg)
-
-  if (VERBOSE && shouldUpdate) {
-    console.log('Rendering ' + component.displayName + ' at [' +
-                address.join(', ') + '].')
-  }
-
-  // render
-  const bindings = shouldUpdate ? (component.render(arg) || null) : null
-  // check result
-  if (shouldUpdate && bindings === null && hasChildren(component.model)) {
-    throw new Error('The render function of component ' + component.displayName +
-                    ' did not return new bindings')
-  }
-
-  if      (diff.needsCreate) component.didMount(arg)
-  else if (shouldUpdate) component.didUpdate(arg)
-
-  return bindings
-}
-
-/**
- * Add the new userBindings to the tree at bindingsNode.
- * @param {Object} node - A model node.
- * @param {*} state - A state node.
- * @param {Object} userBindings - The new bindings returned by render.
- * @param {Object|null} bindingsNode - A node in the existing bindings tree.
- * @return {Object} The new node for the bindings tree.
- */
-export function mergeBindings (node, state, userBindings, bindingsNode) {
+function checkRenderResultRecurse (userBindings, node, state) {
   const updateRecurse = (s, k) => {
     const u = k === null ? userBindings : get(userBindings, k)
     if (userBindings !== null && u === null) {
       throw new Error('Shape of the bindings object does not match the model.' +
                       'Model: ' + node + '  Bindings object: ' + userBindings)
     }
-    const existingBinding = (k === null ? bindingsNode :
-                             get(bindingsNode, k))
-    const data = u || get(existingBinding, 'data')
-    const children = get(existingBinding, 'children')
-    return tagType(NODE, { data, children })
   }
   const recurse = (n, k) => {
-    return mergeBindings(n, get(state, k), get(userBindings, k),
-                         get(bindingsNode, k))
+    checkRenderResultRecurse(get(userBindings, k), n, get(state, k))
   }
-  return match(
+  match(
     node,
     {
       [OBJECT_OF]: node => {
@@ -326,8 +256,9 @@ export function mergeBindings (node, state, userBindings, bindingsNode) {
           throw new Error('Shape of the bindings object does not match the ' +
                           'model. Model: ' + node + ' Bindings object: ' +
                           userBindings)
+        } else {
+          map(state, updateRecurse)
         }
-        return map(state, updateRecurse)
       },
       [ARRAY_OF]:  node => {
         // check array lengths
@@ -335,8 +266,9 @@ export function mergeBindings (node, state, userBindings, bindingsNode) {
           throw new Error('Shape of the bindings object does not match the ' +
                           'model. Model: ' + node + ' Bindings object: ' +
                           userBindings)
+        } else {
+          map(state, updateRecurse)
         }
-        return map(state, updateRecurse)
       },
       [COMPONENT]: node => updateRecurse(state, null),
       [ARRAY]:  node => {
@@ -344,19 +276,97 @@ export function mergeBindings (node, state, userBindings, bindingsNode) {
           throw new Error('Shape of the bindings object does not match the ' +
                           'model. Model: ' + node + ' Bindings object: ' +
                           userBindings)
+        } else {
+          map(node, recurse)
         }
-        return map(node, recurse)
       },
       [OBJECT]: node => {
         if (userBindings !== null && isArray(userBindings)) {
           throw new Error('Shape of the bindings object does not match the ' +
                           'model. Model: ' + node + ' Bindings object: ' +
                           userBindings)
+        } else {
+          map(node, recurse)
         }
-        return map(node, recurse)
       }
     }
   )
+}
+
+/**
+ * Check the result of render against the model and state.
+ * @param {Object} node - A model node.
+ * @param {*} state - A state node.
+ * @param {Object} userBindings - The new bindings returned by render.
+ * @return {Object} The userBindings object.
+ */
+export function checkRenderResult (userBindings, node, state) {
+  checkRenderResultRecurse(userBindings, node, state)
+  return userBindings
+}
+
+/**
+ * Run lifecycle functions for the component.
+ * @param {Object} address -
+ * @param {Object} component -
+ * @param {Object} state -
+ * @param {Object} diff -
+ * @param {Object|null} lastRenderedEl - The element rendered in previously, if
+ *                                       there was one.
+ * @param {Object|null} el - The element to render in provided by
+ *                           component.render.
+ * @param {Object} stateCallers -
+ * @return {Object}
+ */
+export function updateEl (address, component, state, diff, lastRenderedEl, el,
+                          stateCallers) {
+  // the object passed to lifecycle functions
+  const reducers = patchReducers(address, component, stateCallers.callReducer)
+  const signals = patchSignals(address, component, stateCallers.callSignal)
+  const methods = patchMethods(address, component, stateCallers.callMethod,
+                               reducers, signals)
+  const arg = { state, methods, reducers, signals, el, lastRenderedEl }
+
+  // warn if the el is null
+  if (el === null && !diff.needsDestroy && component.render !== noop) {
+    throw new Error('No binding provided for component ' + component.displayName
+                    + ' at [' + address.join(', ') + '].')
+  }
+
+  if (diff.needsDestroy) {
+    // destroy
+    component.willUnmount(arg)
+    return { bindings: null, lastRenderedEl }
+  } else {
+    // create or update
+    const shouldUpdate = (diff.needsCreate ||
+                          (component.shouldUpdate(arg) &&
+                           (diff.needsUpdate || el !== lastRenderedEl)))
+
+    if      (diff.needsCreate) component.willMount(arg)
+    else if (shouldUpdate)     component.willUpdate(arg)
+
+    if (VERBOSE && shouldUpdate) {
+      console.log('Rendering ' + component.displayName + ' at [' +
+                  address.join(', ') + '].')
+    }
+
+    // render
+    const bindings = shouldUpdate ?
+            checkRenderResult(component.render(arg), component.model, state) :
+            null
+    // check result
+    if (shouldUpdate && bindings === null && hasChildren(component.model)) {
+      throw new Error('The render function of component ' +
+                      component.displayName + ' did not return new bindings')
+    }
+
+    if      (diff.needsCreate) component.didMount(arg)
+    else if (shouldUpdate)     component.didUpdate(arg)
+
+    // If the component rendered, then change lastEl.
+    return { bindings, lastRenderedEl: shouldUpdate ? el : lastRenderedEl }
+  }
 }
 
 /**
@@ -365,38 +375,41 @@ export function mergeBindings (node, state, userBindings, bindingsNode) {
  * @param {Object} node - A model or a node within a model.
  * @param {Object} diff - The diff object for this component.
  * @param {Object|null} bindings -
+ * @param {Object|null} renderResult -
  * @param {Object} stateCallers -
  * @return {Object}
  */
-function updateComponents (address, node, state, diff, bindings, stateCallers) {
+function updateComponents (address, node, state, diff, bindings, renderResult,
+                           stateCallers) {
   const updateRecurse = ([ d, s, b ], k) => {
+    // TODO in updateRecurse functions where k can be null, there must be a
+    // nicer way to organize things with fewer null checks
     const component = k !== null ? node.component : node
     const newAddress = k !== null ? addressWith(address, k) : address
+    const r = k !== null ? get(renderResult, k) : renderResult
     // Update the component. If needs_destroy, then there will not be a binding.
-    const userBindings = updateEl(newAddress, component, s, d.data,
-                                  get(b, 'data'), stateCallers)
-    // merge the bindings, preferring the new bindings
-    const currBindings = userBindings === null ? get(b, 'children') :
-            mergeBindings(component.model, s, userBindings, b.children)
+    const res = updateEl(newAddress, component, s, d.data, get(b, 'data'), r,
+                         stateCallers)
+    const nextRenderResult = res.bindings
+    const data = res.lastRenderedEl
     // update children
     const children = updateComponents(newAddress, component.model, s,
-                                      d.children, currBindings, stateCallers)
-    return b === null ? null : tagType(NODE, { data: b.data, children })
+                                      d.children, get(b, 'children'),
+                                      nextRenderResult, stateCallers)
+    return tagType(NODE, { data, children })
   }
   const mapRecurse = node => map(node, (n, k) => {
-    return updateComponents(addressWith(address, k), n, get(state, k),
-                            diff[k], get(bindings, k), stateCallers)
+    return updateComponents(addressWith(address, k), n, get(state, k), diff[k],
+                            get(bindings, k), get(renderResult, k), stateCallers)
   })
   return match(
     node,
     {
       [OBJECT_OF]: node => {
-        return filter(map(zip([ diff, state, bindings ]), updateRecurse),
-                      notNull)
+        return map(zip([ diff, state, bindings ]), updateRecurse)
       },
       [ARRAY_OF]:  node => {
-        return filter(map(zip([ diff, state, bindings ]), updateRecurse),
-                      notNull)
+        return map(zip([ diff, state, bindings ]), updateRecurse)
       },
       [COMPONENT]: node => updateRecurse([ diff, state, bindings ], null),
       [ARRAY]:  mapRecurse,
@@ -876,7 +889,7 @@ export function createComponent (options = {}) {
     methods:      {},
     willMount:    noop,
     didMount:     noop,
-    shouldUpdate: constant(null),
+    shouldUpdate: constant(true),
     willUpdate:   noop,
     didUpdate:    noop,
     willUnmount:  noop,
@@ -1007,7 +1020,8 @@ export function makeCallReducer (state, bindings, signals, stateCallers) {
     setTinierState(address, signals, newSignals)
     // update the components
     const newBindings = updateComponents(address, component, newLocalState,
-                                         diff, localBindings, stateCallers)
+                                         diff, localBindings.children,
+                                         localBindings.data, stateCallers)
     // merge the returned bindings into a coherent object after updating each
     // component instances
     setTinierState(address, bindings, newBindings)
