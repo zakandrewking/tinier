@@ -1,0 +1,12 @@
+language: node_js
+node_js:
+  - "6"
+install:
+  - npm install
+script:
+  - npm run test
+# no emails
+notifications:
+  email: false
+# run with containers
+sudo: false
