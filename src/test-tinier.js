@@ -4,7 +4,7 @@ import {
   hasChildren, checkRenderResult, updateEl, addressWith, addressEqual,
   diffWithModel, getState, setState, getTinierState, setTinierState, makeSignal,
   makeOneSignalAPI, makeChildSignalsAPI, reduceChildren, mergeSignals, objectOf,
-  arrayOf, createComponent, makeStateCallers, run,
+  arrayOf, createComponent, makeStateCallers, run, forceRenderReducer,
 } from './tinier'
 
 import { describe, it } from 'mocha'
@@ -880,5 +880,44 @@ describe('run', () => {
     assert.strictEqual(getState().child.val, 2)
     methods.add({ v: 3 })
     assert.strictEqual(getState().child.val, 3)
+  })
+
+  it('async post-render functions; run verbose; return reducers', () => {
+    const Child = createComponent({
+      displayName: 'Child',
+      init: () => ({ val: 1 }),
+      signalNames: [ 'rendered' ],
+      render: ({ state, methods, el }) => EL2,
+      didUpdate: ({ signals }) => {
+        signals.rendered.call({})
+      },
+      willUnmount: ({ signals }) => {
+        signals.rendered.call({})
+      },
+    })
+
+    const Parent = createComponent({
+      displayName: 'Parent',
+      model: { child: arrayOf(Child) },
+      signalSetup: ({ childSignals, reducers }) => {
+        childSignals.child.rendered.onEach(reducers.forceRender.call)
+      },
+      init: () => ({ child: [ Child.init() ] }),
+      reducers: {
+        increment: ({ state }) => ({
+          ...state,
+          child: [ ...state.child, Child.init() ],
+        }),
+        forceRender: forceRenderReducer
+      },
+      render: ({ state }) => {
+        return { child: state.child.map(() => EL1) }
+      },
+    })
+
+    const { reducers } = run(Parent, EL1, { verbose: true })
+    // When the didUpdate and willUnmount functions are called synchronously,
+    // the bindings get out of balance, so this should test for that.
+    reducers.increment()
   })
 })

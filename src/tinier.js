@@ -160,6 +160,13 @@ function any (ar) {
   return ar.reduce((accum, val) => accum || val, false)
 }
 
+/**
+ * Defers calling fn until the current process finishes.
+ */
+function defer (fn) {
+  setTimeout(fn, 1)
+}
+
 export function tagType (type, obj) {
   if (typeof type !== 'string') {
     throw new Error('First argument must be a string')
@@ -359,8 +366,9 @@ export function updateEl (address, component, state, diff, lastRenderedEl, el,
                       component.displayName + ' did not return new bindings')
     }
 
-    if      (diff.needsCreate) component.didMount(arg)
-    else if (shouldUpdate)     component.didUpdate(arg)
+    // These need to be asynchronous.
+    if      (diff.needsCreate) defer(() => component.didMount(arg))
+    else if (shouldUpdate)     defer(() => component.didUpdate(arg))
 
     // If the component rendered, then change lastEl.
     return { bindings, lastRenderedEl: shouldUpdate ? el : lastRenderedEl }
@@ -1068,7 +1076,7 @@ export function makeStateCallers (state, bindings, signals, opts) {
  *                                     will be called to initialize the state.
  * @return {Object} The API functions, incuding getState, signals, and methods.
  */
-export function run (component, appEl, initialState = null, opts = {}) {
+export function run (component, appEl, opts = {}) {
   // Create variables that will store the state for the whole lifetime of the
   // application. Similar to the redux model.
   let state    = { [TOP]: null }
@@ -1081,7 +1089,7 @@ export function run (component, appEl, initialState = null, opts = {}) {
 
   // first draw
   const initReducer = () => {
-    return initialState !== null ? initialState : component.init()
+    return 'initialState' in opts ? opts.initialState : component.init()
   }
   stateCallers.callReducer(topAddress, component, initReducer, {})
 
@@ -1091,7 +1099,7 @@ export function run (component, appEl, initialState = null, opts = {}) {
   const signalsCall = patchSignals(topAddress, component, stateCallers.callSignal)
   const methods = patchMethods(topAddress, component, stateCallers.callMethod,
                                reducers, signalsCall)
-  return { getState: () => state[TOP], signals: localSignals, methods }
+  return { getState: () => state[TOP], signals: localSignals, methods, reducers }
 }
 
 export function forceRenderReducer ({ state }) {
