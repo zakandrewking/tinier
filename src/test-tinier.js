@@ -518,7 +518,7 @@ describe('updateEl', () => {
       needsDestroy: true,
     }
     const { bindings } = updateEl([], DefComponent, {}, diff, EL1, EL1,
-                                  defStateCallers)
+                                  defStateCallers, {})
     assert.isNull(bindings)
   })
 
@@ -530,7 +530,7 @@ describe('updateEl', () => {
     const state = { c: {} }
     const diff = { needsCreate: false, needsUpdate: true, needsDestroy: false }
     const { bindings } = updateEl([], component, state, diff, EL1, EL1,
-                                  defStateCallers)
+                                  defStateCallers, {})
     assert.deepEqual(bindings, { c: EL1 })
   })
 
@@ -542,7 +542,7 @@ describe('updateEl', () => {
     const state = { c: {} }
     const diff = { needsCreate: true, needsUpdate: false, needsDestroy: false }
     const { bindings } = updateEl([], component, state, diff, EL1, EL1,
-                                  defStateCallers)
+                                  defStateCallers, {})
     assert.deepEqual(bindings, { c: EL1 })
   })
 
@@ -554,7 +554,7 @@ describe('updateEl', () => {
     const state = { c: {} }
     const diff = { needsCreate: true, needsUpdate: false, needsDestroy: false }
     const { bindings } = updateEl([], component, state, diff, EL1, EL1,
-                                  defStateCallers)
+                                  defStateCallers, {})
     assert.strictEqual(bindings, EL1)
   })
 
@@ -563,7 +563,7 @@ describe('updateEl', () => {
     const state = { c: {} }
     const diff = { needsCreate: false, needsUpdate: true, needsDestroy: false }
     const { bindings, lastRenderedEl } = updateEl([], component, state, diff,
-                                                  EL1, EL2, defStateCallers)
+                                                  EL1, EL2, defStateCallers, {})
     assert.deepEqual(bindings, { a: EL2 })
     assert.strictEqual(lastRenderedEl, EL2)
   })
@@ -573,7 +573,7 @@ describe('updateEl', () => {
     const state = { c: {} }
     const diff = { needsCreate: false, needsUpdate: true, needsDestroy: false }
     const { bindings, lastRenderedEl } = updateEl([], component, state, diff,
-                                                  null, EL1, defStateCallers)
+                                                  null, EL1, defStateCallers, {})
     assert.deepEqual(bindings, { a: EL1 })
     assert.strictEqual(lastRenderedEl, EL1)
   })
@@ -586,7 +586,7 @@ describe('updateEl', () => {
     const state = { c: {} }
     const diff = { needsCreate: false, needsUpdate: false, needsDestroy: false }
     const { bindings } = updateEl([], component, state, diff, EL1, EL1,
-                                  defStateCallers)
+                                  defStateCallers, {})
     assert.isNull(bindings)
   })
 
@@ -598,7 +598,7 @@ describe('updateEl', () => {
     const state = { c: {} }
     const diff = { needsCreate: false, needsUpdate: true, needsDestroy: false }
     const { bindings } = updateEl([], component, state, diff, EL1, EL1,
-                                  defStateCallers)
+                                  defStateCallers, {})
     assert.isNull(bindings)
   })
 })

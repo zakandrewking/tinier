@@ -1,7 +1,5 @@
 /** @module tinier */
 
-const VERBOSE = false
-
 // constants
 export const ARRAY_OF  = '@TINIER_ARRAY_OF'
 export const OBJECT_OF = '@TINIER_OBJECT_OF'
@@ -319,7 +317,7 @@ export function checkRenderResult (userBindings, node, state) {
  * @return {Object}
  */
 export function updateEl (address, component, state, diff, lastRenderedEl, el,
-                          stateCallers) {
+                          stateCallers, opts) {
   // the object passed to lifecycle functions
   const reducers = patchReducers(address, component, stateCallers.callReducer)
   const signals = patchSignals(address, component, stateCallers.callSignal)
@@ -346,7 +344,7 @@ export function updateEl (address, component, state, diff, lastRenderedEl, el,
     if      (diff.needsCreate) component.willMount(arg)
     else if (shouldUpdate)     component.willUpdate(arg)
 
-    if (VERBOSE && shouldUpdate) {
+    if (opts.verbose && shouldUpdate) {
       console.log('Rendering ' + component.displayName + ' at [' +
                   address.join(', ') + '].')
     }
@@ -370,6 +368,18 @@ export function updateEl (address, component, state, diff, lastRenderedEl, el,
 }
 
 /**
+ * For a tree, return everything down to the first set of NODES with data for
+ * leaves.
+ */
+function dropNodes (tree) {
+  return match(tree, {
+    [NODE]: node => node.data,
+    [OBJECT]: node => map(node, dropNodes),
+    [ARRAY]: node => map(node, dropNodes),
+  })
+}
+
+/**
  * Run create, update, and destroy for component.
  * @param {Array} address - The location of the component in the state.
  * @param {Object} node - A model or a node within a model.
@@ -380,38 +390,42 @@ export function updateEl (address, component, state, diff, lastRenderedEl, el,
  * @return {Object}
  */
 function updateComponents (address, node, state, diff, bindings, renderResult,
-                           stateCallers) {
-  const updateRecurse = ([ d, s, b ], k) => {
+                           stateCallers, opts) {
+  const updateRecurse = ([ d, s ], k) => {
     // TODO in updateRecurse functions where k can be null, there must be a
     // nicer way to organize things with fewer null checks
     const component = k !== null ? node.component : node
     const newAddress = k !== null ? addressWith(address, k) : address
+    const b = k !== null ? get(bindings, k) : bindings
     const r = k !== null ? get(renderResult, k) : renderResult
     // Update the component. If needs_destroy, then there will not be a binding.
     const res = updateEl(newAddress, component, s, d.data, get(b, 'data'), r,
-                         stateCallers)
-    const nextRenderResult = res.bindings
+                         stateCallers, opts)
+    // Fall back on old bindings.
+    const nextRenderResult = res.bindings !== null ? res.bindings :
+            dropNodes(b.children)
     const data = res.lastRenderedEl
     // update children
     const children = updateComponents(newAddress, component.model, s,
                                       d.children, get(b, 'children'),
-                                      nextRenderResult, stateCallers)
+                                      nextRenderResult, stateCallers, opts)
     return tagType(NODE, { data, children })
   }
   const mapRecurse = node => map(node, (n, k) => {
     return updateComponents(addressWith(address, k), n, get(state, k), diff[k],
-                            get(bindings, k), get(renderResult, k), stateCallers)
+                            get(bindings, k), get(renderResult, k),
+                            stateCallers, opts)
   })
   return match(
     node,
     {
       [OBJECT_OF]: node => {
-        return map(zip([ diff, state, bindings ]), updateRecurse)
+        return map(zip([ diff, state ]), updateRecurse)
       },
       [ARRAY_OF]:  node => {
-        return map(zip([ diff, state, bindings ]), updateRecurse)
+        return map(zip([ diff, state ]), updateRecurse)
       },
-      [COMPONENT]: node => updateRecurse([ diff, state, bindings ], null),
+      [COMPONENT]: node => updateRecurse([ diff, state ], null),
       [ARRAY]:  mapRecurse,
       [OBJECT]: mapRecurse,
     })
@@ -944,7 +958,7 @@ export function patchMethods (address, component, callMethod, reducers, signals)
   return methods
 }
 
-export function makeCallMethod (state) {
+export function makeCallMethod (state, opts) {
   /**
    * Call a method on the local state
    * @param address
@@ -973,9 +987,9 @@ export function makeCallMethod (state) {
 /**
  * Return a callSignal function.
  */
-function makeCallSignal (signals) {
+function makeCallSignal (signals, opts) {
   return (address, signalName, arg) => {
-    if (VERBOSE) {
+    if (opts.verbose) {
       console.log('Called signal ' + signalName + ' at [' + address.join(', ') +
                   '].')
     }
@@ -996,7 +1010,7 @@ function makeCallSignal (signals) {
  *   @param reducer
  *   @param arg - An argument object.
  */
-export function makeCallReducer (state, bindings, signals, stateCallers) {
+export function makeCallReducer (state, bindings, signals, stateCallers, opts) {
   return (address, component, reducer, arg, name) => {
     // get the local state
     const localState = getState(address, state)
@@ -1004,7 +1018,7 @@ export function makeCallReducer (state, bindings, signals, stateCallers) {
     const localSignals = getTinierState(address, signals)
     // run the reducer
     const newLocalState = reducer({ ...arg, state: localState })
-    if (VERBOSE) {
+    if (opts.verbose) {
       console.log('Called reducer ' + name + ' for ' + component.displayName +
                   ' at [' + address.join(', ') + '].')
       console.log(localState)
@@ -1019,9 +1033,9 @@ export function makeCallReducer (state, bindings, signals, stateCallers) {
                                     stateCallers)
     setTinierState(address, signals, newSignals)
     // update the components
-    const newBindings = updateComponents(address, component, newLocalState,
-                                         diff, localBindings.children,
-                                         localBindings.data, stateCallers)
+    const newBindings = updateComponents(address, component, newLocalState, diff,
+                                         localBindings, localBindings.data,
+                                         stateCallers, opts)
     // merge the returned bindings into a coherent object after updating each
     // component instances
     setTinierState(address, bindings, newBindings)
@@ -1036,12 +1050,12 @@ export function makeCallReducer (state, bindings, signals, stateCallers) {
  * @return {Object} An object with functions callMethod, callSignal, and
  *                  callReducer.
  */
-export function makeStateCallers (state, bindings, signals) {
+export function makeStateCallers (state, bindings, signals, opts) {
   const stateCallers = {}
-  stateCallers.callMethod = makeCallMethod(state)
-  stateCallers.callSignal = makeCallSignal(signals)
+  stateCallers.callMethod = makeCallMethod(state, opts)
+  stateCallers.callSignal = makeCallSignal(signals, opts)
   stateCallers.callReducer = makeCallReducer(state, bindings, signals,
-                                             stateCallers)
+                                             stateCallers, opts)
   return stateCallers
 }
 
@@ -1054,7 +1068,7 @@ export function makeStateCallers (state, bindings, signals) {
  *                                     will be called to initialize the state.
  * @return {Object} The API functions, incuding getState, signals, and methods.
  */
-export function run (component, appEl, initialState = null) {
+export function run (component, appEl, initialState = null, opts = {}) {
   // Create variables that will store the state for the whole lifetime of the
   // application. Similar to the redux model.
   let state    = { [TOP]: null }
@@ -1063,7 +1077,7 @@ export function run (component, appEl, initialState = null) {
   const topAddress = [ TOP ]
 
   // functions that access state, signals, and bindings
-  const stateCallers = makeStateCallers(state, bindings, signals)
+  const stateCallers = makeStateCallers(state, bindings, signals, opts)
 
   // first draw
   const initReducer = () => {
