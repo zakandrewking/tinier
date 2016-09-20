@@ -9,7 +9,9 @@ export const OBJECT    = '@TINIER_OBJECT'
 export const NODE      = '@TINIER_NODE'
 export const NULL      = '@TINIER_NULL'
 export const TOP       = '@TINIER_TOP'
-const FORCE_RENDER = '@TINIER_FORCE_RENDER'
+export const CREATE    = '@TINIER_CREATE'
+export const UPDATE    = '@TINIER_UPDATE'
+export const DESTROY   = '@TINIER_DESTROY'
 
 // basic functions
 function noop () {}
@@ -26,8 +28,12 @@ function last (array) {
   return array[array.length - 1]
 }
 
-function tail (array) {
+export function tail (array) {
   return [ array.slice(0, -1), last(array) ]
+}
+
+export function head (array) {
+  return [ array[0], array.slice(1) ]
 }
 
 function fromPairs (pairs) {
@@ -315,7 +321,7 @@ export function checkRenderResult (userBindings, node, state) {
  * @param {Object} address -
  * @param {Object} component -
  * @param {Object} state -
- * @param {Object} diff -
+ * @param {Object} diffVal -
  * @param {Object|null} lastRenderedEl - The element rendered in previously, if
  *                                       there was one.
  * @param {Object|null} el - The element to render in provided by
@@ -323,7 +329,7 @@ export function checkRenderResult (userBindings, node, state) {
  * @param {Object} stateCallers -
  * @return {Object}
  */
-export function updateEl (address, component, state, diff, lastRenderedEl, el,
+export function updateEl (address, component, state, diffVal, lastRenderedEl, el,
                           stateCallers, opts) {
   // the object passed to lifecycle functions
   const reducers = patchReducers(address, component, stateCallers.callReducer)
@@ -333,22 +339,21 @@ export function updateEl (address, component, state, diff, lastRenderedEl, el,
   const arg = { state, methods, reducers, signals, el, lastRenderedEl }
 
   // warn if the el is null
-  if (el === null && !diff.needsDestroy && component.render !== noop) {
+  if (el === null && !diffVal === DESTROY && component.render !== noop) {
     throw new Error('No binding provided for component ' + component.displayName
                     + ' at [' + address.join(', ') + '].')
   }
 
-  if (diff.needsDestroy) {
+  if (diffVal === DESTROY) {
     // destroy
     component.willUnmount(arg)
     return { bindings: null, lastRenderedEl }
   } else {
     // create or update
-    const shouldUpdate = (diff.needsCreate ||
-                          (component.shouldUpdate(arg) &&
-                           (diff.needsUpdate || el !== lastRenderedEl)))
+    const shouldUpdate = (diffVal === CREATE || diffVal === UPDATE ||
+                          el !== lastRenderedEl)
 
-    if      (diff.needsCreate) component.willMount(arg)
+    if      (diffVal === CREATE) component.willMount(arg)
     else if (shouldUpdate)     component.willUpdate(arg)
 
     if (opts.verbose && shouldUpdate) {
@@ -367,7 +372,7 @@ export function updateEl (address, component, state, diff, lastRenderedEl, el,
     }
 
     // These need to be asynchronous.
-    if      (diff.needsCreate) defer(() => component.didMount(arg))
+    if      (diffVal === CREATE) defer(() => component.didMount(arg))
     else if (shouldUpdate)     defer(() => component.didUpdate(arg))
 
     // If the component rendered, then change lastEl.
@@ -406,7 +411,7 @@ function updateComponents (address, node, state, diff, bindings, renderResult,
     const newAddress = k !== null ? addressWith(address, k) : address
     const b = k !== null ? get(bindings, k) : bindings
     const r = k !== null ? get(renderResult, k) : renderResult
-    // Update the component. If needs_destroy, then there will not be a binding.
+    // Update the component. If DESTROY, then there will not be a binding.
     const res = updateEl(newAddress, component, s, d.data, get(b, 'data'), r,
                          stateCallers, opts)
     // Fall back on old bindings.
@@ -427,13 +432,13 @@ function updateComponents (address, node, state, diff, bindings, renderResult,
   return match(
     node,
     {
-      [OBJECT_OF]: node => {
+      [OBJECT_OF]: objOf => {
         return map(zip([ diff, state ]), updateRecurse)
       },
-      [ARRAY_OF]:  node => {
+      [ARRAY_OF]:  arOf => {
         return map(zip([ diff, state ]), updateRecurse)
       },
-      [COMPONENT]: node => updateRecurse([ diff, state ], null),
+      [COMPONENT]: component => updateRecurse([ diff, state ], null),
       [ARRAY]:  mapRecurse,
       [OBJECT]: mapRecurse,
     })
@@ -453,150 +458,296 @@ export function addressEqual (a1, a2) {
 }
 
 /**
- * Get the value in state.
+ * Get the value in a tree.
  * @param {Array} address -
- * @param {Object} object -
- * @return {*} -
+ * @param {Object} tree -
+ * @return {*} - The value at the given address.
  */
-export function getState (address, object) {
-  return address.reduce((accum, val) => accum[val], object)
+function treeGet (address, tree) {
+  return address.reduce((accum, val) => {
+    return checkType(NODE, accum) ? accum.children[val] : accum[val]
+  }, tree)
 }
 
 /**
- * Set the value in state.
+ * Set the value in a tree; immutable.
  * @param {Array} address -
- * @param {Object} object -
- * @param {*} value -
+ * @param {Object} tree -
+ * @param {*} value - The new value to set at address.
+ * @return (*) The new tree.
  */
-export function setState (address, object, value) {
-  const [ ar, last ] = tail(address)
-  const parent = getState(ar, object)
-  parent[last] = value
-}
-
-/**
- * Get the value at address in a tree of NODEs (signals, bindings, etc.).
- * @param {Array} address -
- * @param {Object} object -
- * @return {*} value -
- */
-export function getTinierState (address, object) {
-  return address.reduce((node, val) => {
-    return checkType(NODE, node) ? node.children[val] : node[val]
-  }, object)
-}
-
-/**
- * Set the value at address in a tree of NODEs (signals, bindings, etc.).
- * @param {Array} address -
- * @param {Object} object -
- * @param {*} value -
- */
-export function setTinierState (address, object, value) {
-  const [ ar, last ] = tail(address)
-  const parent = getTinierState(ar, object)
-  if (checkType(NODE, parent)) {
-    parent.children[last] = value
+function treeSet (address, tree, value) {
+  if (address.length === 0) {
+    return value
   } else {
-    parent[last] = value
+    const [ k, rest ] = head(address)
+    return (typeof k === 'string' ?
+            { ...tree, [k]: treeSet(rest, treeGet([ k ], tree), value) } :
+            [ ...tree.slice(0, k), treeSet(rest, treeGet([ k ], tree), value),
+              ...tree.slice(k - 1) ])
   }
 }
 
 /**
- * Walk content and diff newState and oldState. Where differences exist, update
- * the needsCreate, needsUpdate, and needsDestroy labels in the view in the
- * content. Differences are determined by strict equality ===.
- *
- * TODO also check the state to make sure it's valid for this model.
- *
+ * Set the value in a tree; mutable.
+ * @param {Array} address -
+ * @param {Object} tree -
+ * @param {*} value - The new value to set at address.
+ * @return (*) The tree.
+ */
+function treeSetMutable (address, tree, value) {
+  if (address.length === 0) {
+    return value
+  } else {
+    const [ rest, last ] = tail(address)
+    const parent = treeGet(rest, tree)
+    if (checkType(NODE, parent)) {
+      parent.children[last] = value
+    } else {
+      parent[last] = value
+    }
+    return tree
+  }
+}
+
+export function makeTree (init, mutable) {
+  let state = init
+  return {
+    get: (address) => {
+      return treeGet(address, state)
+    },
+    set: (address, value) => {
+      state = mutable ?
+        treeSetMutable(address, state, value) :
+        treeSet(address, state, value)
+    },
+  }
+}
+
+/**
+ * Check that the new state is valid. If not, then throw an Error.
  * @param {Object} modelNode - A model or a node of a model.
  * @param {Object} newState - The new state corresponding to modelNode.
- * @param {Object|null} oldState - The old state corresponding to modelNode.
- * @param {Array} address - The current address.
- * @returns {Object} An object with the same shape as modelNode that specifies
- *                   which view need to be created, updated, and destroyed. Also
- *                   keeps track of the actions for each view.
  */
-export function diffWithModel (modelNode, newState, oldState) {
+export function checkState (modelNode, newState) {
+  match(modelNode, {
+    [OBJECT_OF]: objOf => {
+      if ((!isObject(newState) || isArray(newState)) && newState !== null) {
+        throw new Error('Shape of the new state does not match the model. ' +
+                        'Model: ' + objOf + '  State: ' + newState)
+      } else {
+        map(newState, s => checkState(modelNode.component.model, s))
+      }
+    },
+    [ARRAY_OF]: arOf => {
+      if (!isArray(newState) && newState !== null) {
+        throw new Error('Shape of the new state does not match the model.' +
+                        'Model: ' + arOf + '  State: ' + newState)
+      } else {
+        map(newState, s => checkState(modelNode.component.model, s))
+      }
+    },
+    [COMPONENT]: component => {
+      checkState(modelNode.model, newState)
+    },
+    [ARRAY]: ar => {
+      if (!isArray(newState) && newState !== null) {
+        throw new Error('Shape of the new state does not match the model.' +
+                        'Model: ' + ar + '  State: ' + newState)
+      } else {
+        map(ar, (a, i) => checkState(a, get(newState, i)))
+      }
+    },
+    [OBJECT]: obj => {
+      if ((!isObject(newState) || isArray(newState)) && newState !== null) {
+        throw new Error('Shape of the new state does not match the model. ' +
+                        'Model: ' + obj + '  State: ' + newState)
+      } else {
+        map(obj, (o, k) => checkState(o, get(newState, k)))
+      }
+    },
+  })
+}
+
+function computeDiffValue (state, lastState, key, isValidFn, shouldUpdate,
+                           address, triggeringAddress) {
+  const stateValid = isValidFn(state, key)
+  const lastStateValid = isValidFn(lastState, key)
+  if (stateValid && !lastStateValid) {
+    return CREATE
+  } else if (stateValid && lastStateValid) {
+    const same = (key === null ? state !== lastState :
+                  state[key] !== lastState[key])
+    const componentTriggeredUpdate = addressEqual(address, triggeringAddress)
+    if (same && shouldUpdate({ state, lastState, componentTriggeredUpdate })) {
+      return UPDATE
+    } else {
+      return null
+    }
+  } else if (!stateValid && lastStateValid) {
+    return DESTROY
+  } else {
+    return null
+  }
+}
+
+/**
+ * Compute the full diff tree for the model node. Calls shouldUpdate.
+ */
+function diffWithModel (modelNode, state, lastState, address,
+                        triggeringAddress) {
   return match(
     modelNode,
     {
-      [OBJECT_OF]: node => {
-        if ((!isObject(newState) || isArray(newState)) && newState !== null) {
-          throw new Error('Shape of the new state does not match the model. ' +
-                          'Model: ' + node + '  State: ' + newState)
+      [OBJECT_OF]: objOf => {
+        const isValidFn = (obj, k) => {
+          return isObject(obj) && k in obj && obj[k] !== null
         }
-        const isValid = (obj, k) => isObject(obj) && k in obj && obj[k] !== null
-        const l = Object.assign({}, newState || {}, oldState || {})
+        const l = Object.assign({}, state || {}, lastState || {})
         return mapValues(l, function (_, k) {
-          const data = {
-            needsCreate:  isValid(newState, k)  && !isValid(oldState, k),
-            needsUpdate:  isValid(newState, k)  &&  isValid(oldState, k) &&
-                            newState[k] !== oldState[k],
-            needsDestroy: !isValid(newState, k) &&  isValid(oldState, k),
-          }
-          const children = diffWithModel(node.component.model,
-                                         get(newState, k),
-                                         get(oldState, k))
+          const data = computeDiffValue(state, lastState, k, isValidFn,
+                                        objOf.component.shouldUpdate,
+                                        addressWith(k), triggeringAddress)
+          const children = diffWithModel(objOf.component.model,
+                                         get(state, k),
+                                         get(lastState, k),
+                                         addressWith(k),
+                                         triggeringAddress)
           return tagType(NODE, { data, children })
         })
       },
-      [ARRAY_OF]: node => {
-        if (!isArray(newState) && newState !== null) {
-          throw new Error('Shape of the new state does not match the model.' +
-                          'Model: ' + node + '  State: ' + newState)
-        }
-        const isValid = (obj, i) => {
+      [ARRAY_OF]: arOf => {
+        const isValidFn = (obj, i) => {
           return isArray(obj) && i < obj.length && obj[i] !== null
         }
-        const longest = Math.max(isArray(newState) ? newState.length : 0,
-                                 isArray(oldState) ? oldState.length : 0)
+        const longest = Math.max(isArray(state) ? state.length : 0,
+                                 isArray(lastState) ? lastState.length : 0)
         const l = Array.apply(null, { length: longest })
         return l.map(function (_, i) {
-          const data = {
-            needsCreate:   isValid(newState, i) &&  !isValid(oldState, i),
-            needsUpdate:   isValid(newState, i) &&   isValid(oldState, i) &&
-                             newState[i] !== oldState[i],
-            needsDestroy: !isValid(newState, i) &&   isValid(oldState, i),
-          }
-          const children = diffWithModel(node.component.model,
-                                         get(newState, i),
-                                         get(oldState, i))
+          const data = computeDiffValue(state, lastState, i, isValidFn,
+                                        arOf.component.shouldUpdate,
+                                        addressWith(i), triggeringAddress)
+          const children = diffWithModel(arOf.component.model,
+                                         get(state, i),
+                                         get(lastState, i),
+                                         addressWith(i),
+                                         triggeringAddress)
           return tagType(NODE, { data, children })
         })
       },
-      [COMPONENT]: node => {
-        const isValid = obj => obj !== null
-        const data = {
-          needsCreate:   isValid(newState) &&  !isValid(oldState),
-          needsUpdate:   isValid(newState) &&   isValid(oldState) &&
-                           newState !== oldState,
-          needsDestroy: !isValid(newState) &&   isValid(oldState),
-        }
-        const children = diffWithModel(node.model,
-                                       newState || null,
-                                       oldState || null)
+      [COMPONENT]: component => {
+        const isValidFn = (obj, _) => obj !== null
+        const data = computeDiffValue(state, lastState, null, isValidFn,
+                                      component.shouldUpdate,
+                                      address, triggeringAddress)
+        const children = diffWithModel(component.model, state || null,
+                                       lastState || null, address,
+                                       triggeringAddress)
         return tagType(NODE, { data, children })
       },
-      [ARRAY]: node => {
-        if (!isArray(newState) && newState !== null) {
-          throw new Error('Shape of the new state does not match the model.' +
-                          'Model: ' + node + '  State: ' + newState)
-        }
-        return map(node, (n, i) => {
-          return diffWithModel(n, get(newState, i), get(oldState, i))
+      [ARRAY]: ar => {
+        return ar.map((n, i) => {
+          return diffWithModel(n, get(state, i), get(lastState, i),
+                               addressWith(i), triggeringAddress)
         })
       },
-      [OBJECT]: node => {
-        if ((!isObject(newState) || isArray(newState)) && newState !== null) {
-          throw new Error('Shape of the new state does not match the model. ' +
-                          'Model: ' + node + '  State: ' + newState)
-        }
-        return map(node, (n, k) => {
-          return diffWithModel(n, get(newState, k), get(oldState, k))
+      [OBJECT]: obj => {
+        return map(obj, (n, k) => {
+          return diffWithModel(n, get(state, k), get(lastState, k),
+                               addressWith(k), triggeringAddress)
         })
       },
     })
+}
+
+/**
+ * For an array of minSignals and minUpdate trees, return the minimal trees that
+ * represent the whole array.
+ */
+function singleOrAll (modelNode, address, minTreeAr) {
+  const getMin = indices => {
+    if (indices.length === 0) {
+      // If all elements in the array are null, return null.
+      return null
+    } else if (nonNullIndices.signals.length === 1) {
+      // If there is a single value, return that tree, with an updated address.
+      return {
+        minSignals: {
+          diff: minTreeAr.map(a => a.minSignals.diff),
+          address,
+          modelNode,
+        },
+        minUpdate: {
+          diff: minTreeAr.map(a => a.minUpdate.diff),
+          address,
+          modelNode,
+        },
+      }
+    } else {
+      // Otherwise, return full trees from this level.
+      return {
+        minSignals: {
+          diff: minTreeAr.map(a => a.minSignals.diff),
+          address,
+          modelNode,
+        },
+        minUpdate: {
+          diff: minTreeAr.map(a => a.minUpdate.diff),
+          address,
+          modelNode,
+        },
+      }
+    }
+  }
+  // Get the indices where the signal and update trees are not null.
+  const nonNullIndices = minTreeAr.reduce((accum, val, i) => {
+    return {
+      signals: val.minSignals !== null ? [ ...accum.signals, i ]: accum.signals,
+      update: val.minUpdate !== null ? [ ...accum.update, i ]: accum.update,
+    }
+  }, { signals: [], update: [] })
+  // For each set of indices, test the diffs with these tests to get a minimum
+  // tree.
+  const minSignals = getMin(nonNullIndices.signals)
+  const minUpdate = getMin(nonNullIndices.update)
+  return { minSignals, minUpdate }
+}
+
+/**
+ * 1. Run shouldUpdate for every component in the tree.
+ * 2. Return the information about the minimal tree to update with
+ *    updateComponents (whenever shouldUpdate is true) as minUpdate.
+ * 3. Return the information about the minimal tree to update with
+ *    mergeSignals (whenever nodes are added or deleted) as minSignals.
+ *
+ * @param {Object} modelNode - A model or a node of a model.
+ * @param {Object} state - The new state corresponding to modelNode.
+ * @param {Object|null} lastState - The old state corresponding to modelNode.
+ * @param {Array} address -
+ * @param {Array} triggeringAddress -
+ * @returns {Object} An object with the attributes minSignals and
+ *                   minUpdate. Each represents a minimal tree necessary for the
+ *                   appropriate update function and has the attributes diff,
+ *                   modelNode, and address.
+ */
+export function diffWithModelMin (modelNode, state, lastState, address,
+                                  triggeringAddress) {
+  // 1. calculate whole diff tree
+  const diff = diffWithModel(modelNode, state, lastState, address,
+                             triggeringAddress)
+  // 2. trim the tree for the two needs
+  return {
+    minSignals: {
+      diff,
+      address,
+      modelNode,
+    },
+    minUpdate: {
+      diff,
+      address,
+      modelNode,
+    },
+  }
 }
 
 // -------------------------------------------------------------------
@@ -750,8 +901,8 @@ export function mergeSignals (node, address, diffNode, signalNode, stateCallers,
   const updateRecurse = ([ d, s ], k) => {
     const component = k !== null ? node.component : node
     const newAddress = k !== null ? addressWith(address, k) : address
-    const diffData = d.data
-    if (diffData.needsCreate) {
+    const diffVal = d.data
+    if (diffVal === CREATE) {
       // For create, apply the callbacks
       const { signalsAPI, childSignalsAPI } = runSignalSetup(component,
                                                              newAddress,
@@ -789,15 +940,15 @@ export function mergeSignals (node, address, diffNode, signalNode, stateCallers,
                                     childSignalsAPI, [])
 
       return tagType(NODE, { data, children })
-    } else if (diffData.needsDestroy) {
+    } else if (diffVal === DESTROY) {
       // In the case of destroy, this leaf in the signals object will be null.
       return null
     } else {
       // update
       const { hasCreated, destroyed } = reduceChildren(
-        d.children, (accum, diffData, address) => {
-          const hasCreated = accum.hasCreated || diffData.needsCreate
-          const destroyed = (diffData.needsDestroy ?
+        d.children, (accum, diffVal, address) => {
+          const hasCreated = accum.hasCreated || diffVal === CREATE
+          const destroyed = (diffVal === DESTROY ?
                              [ ...accum.destroyed, address ] :
                              accum.destroyed)
           return { hasCreated, destroyed }
@@ -877,6 +1028,10 @@ export function arrayOf (component) {
   return tagType(ARRAY_OF, { component })
 }
 
+function defaultShouldUpdate ({ state, lastState }) {
+  return state !== lastState
+}
+
 /**
  * Create a tinier component.
  * @param {Object} componentArgs - Functions defining the Tinier component.
@@ -911,7 +1066,7 @@ export function createComponent (options = {}) {
     methods:      {},
     willMount:    noop,
     didMount:     noop,
-    shouldUpdate: constant(true),
+    shouldUpdate: defaultShouldUpdate,
     willUpdate:   noop,
     didUpdate:    noop,
     willUnmount:  noop,
@@ -966,9 +1121,9 @@ export function patchMethods (address, component, callMethod, reducers, signals)
   return methods
 }
 
-export function makeCallMethod (state, opts) {
+export function makeCallMethod (stateTree, opts) {
   /**
-   * Call a method on the local state
+   * Call a method on the local stateTree
    * @param address
    * @param method
    * @param signals
@@ -979,13 +1134,13 @@ export function makeCallMethod (state, opts) {
    * @param arg - An argument object.
    */
   return (address, method, signals, methods, reducers, target, event, arg) => {
-    // check for uninitialized state
-    if (state[TOP] === null) {
+    // check for uninitialized stateTree
+    if (stateTree.get([]) === null) {
       throw new Error('Cannot call method before the app is initialized (e.g. ' +
                       'in signalSetup).')
     }
     // get the local state
-    const localState = getState(address, state)
+    const localState = stateTree.get(address)
     // run the method
     method({ state: localState, signals, methods, reducers, target, event,
              ...arg })
@@ -1001,69 +1156,95 @@ function makeCallSignal (signals, opts) {
       console.log('Called signal ' + signalName + ' at [' + address.join(', ') +
                   '].')
     }
-    getTinierState(address, signals).data.signals[signalName].call(arg)
+    signals.get(address).data.signals[signalName].call(arg)
   }
 }
 
 /**
  * Return a new callReducer function.
- * @param state -
- * @param bindings -
- * @param signals -
- * @param stateCallers -
- * @returns {Function} -
- *   Call a reducer on the local state
- *   @param address - A location, as an array of keys (strings and integers).
- *   @param component
- *   @param reducer
- *   @param arg - An argument object.
+ * @param {Object} topComponent - The top-level component.
+ * @param {Object} stateTree - The global stateTree.
+ * @param {Object} bindingTree - The global bindingTree.
+ * @param {Object} signalTree - The global signalTree.
+ * @param {Object} stateCallers - An object with functions callMethod,
+ *                                callSignal, and callReducer.
+ * @param {Object} opts - Options from `run`.
+ * @returns {Function} - Call a reducer on the local state
+ *   @param {Array} address - A location, as an array of keys (strings and
+ *                            integers).
+ *   @param {Object} triggeringComponent -
+ *   @param {Function} reducer - A reducer.
+ *   @param {Object} arg - An argument object.
+ *   @param {String} name - The name of the reducer (for logging).
  */
-export function makeCallReducer (state, bindings, signals, stateCallers, opts) {
-  return (address, component, reducer, arg, name) => {
-    // get the local state
-    const localState = getState(address, state)
-    const localBindings = getTinierState(address, bindings)
-    const localSignals = getTinierState(address, signals)
-    // run the reducer
+export function makeCallReducer (topComponent, stateTree, bindingTree,
+                                 signalTree, stateCallers, opts) {
+  return (address, triggeringComponent, reducer, arg, name) => {
+    // Run the reducer, and optionally log the result.
+    const localState = stateTree.get(address)
     const newLocalState = reducer({ ...arg, state: localState })
     if (opts.verbose) {
-      console.log('Called reducer ' + name + ' for ' + component.displayName +
-                  ' at [' + address.join(', ') + '].')
+      console.log('Called reducer ' + name + ' for ' +
+                  triggeringComponent.displayName + ' at [' + address.join(', ')
+                  + '].')
       console.log(localState)
       console.log(newLocalState)
     }
-    // diff
-    const diff = diffWithModel(component, newLocalState, localState)
-    // wait to set the state until after it gets checked in diffWithModel
-    setState(address, state, newLocalState)
-    // update the signals
-    const newSignals = mergeSignals(component, address, diff, localSignals,
-                                    stateCallers)
-    setTinierState(address, signals, newSignals)
-    // update the components
-    const newBindings = updateComponents(address, component, newLocalState, diff,
-                                         localBindings, localBindings.data,
+
+    // Check that the new state is valid. If not, throw an Error, and the new
+    // state will be thrown out.
+    checkState(triggeringComponent.model, newLocalState)
+
+    // Set the state with immutable objects and arrays. A reference to oldState
+    // will used for diffing.
+    const lastState = stateTree.get([])
+    stateTree.set(address, newLocalState)
+
+    // Run diffWithModelMin, which will do a few things:
+    // 1. Run shouldUpdate for every component in the tree.
+    // 2. Return the information about the minimal tree to update with
+    //    updateComponents (whenever shouldUpdate is true) as minUpdate.
+    // 3. Return the information about the minimal tree to update with
+    //    mergeSignals (whenever nodes are added or deleted) as minSignals.
+    // The output objects have the attributes diff, modelNode, and address.
+    const { minSignals, minUpdate } = diffWithModelMin(topComponent,
+                                                       stateTree.get([]),
+                                                       lastState, [], address)
+
+    // Update the signals.
+    const localSignals = signalTree.get(minSignals.address)
+    const newSignals = mergeSignals(minSignals.modelNode, minSignals.address,
+                                    minSignals.diff, localSignals, stateCallers)
+    signalTree.set(minSignals.address, newSignals)
+
+    // Update the components.
+    const minUpdateBindings = bindingTree.get(minUpdate.address)
+    const minUpdateEl = minUpdateBindings.data
+    const minUpdateState = stateTree.get(minUpdate.address)
+    const newBindings = updateComponents(minUpdate.address, minUpdate.modelNode,
+                                         minUpdateState, minUpdate.diff,
+                                         minUpdateBindings, minUpdateEl,
                                          stateCallers, opts)
-    // merge the returned bindings into a coherent object after updating each
-    // component instances
-    setTinierState(address, bindings, newBindings)
+    bindingTree.set(minUpdate.address, newBindings)
   }
 }
 
 /**
  * Return an object with functions callMethod, callSignal, and callReducer.
- * @param {Object} state - The global state.
- * @param {Object} bindings - The global bindings.
- * @param {Object} signals - The global signals.
+ * @param {Object} component - The top-level component.
+ * @param {Object} stateTree - The global stateTree.
+ * @param {Object} bindingTree - The global bindings.
+ * @param {Object} signalTree - The global signalTree.
  * @return {Object} An object with functions callMethod, callSignal, and
  *                  callReducer.
  */
-export function makeStateCallers (state, bindings, signals, opts) {
+export function makeStateCallers (component, stateTree, bindingTree,
+                                  signalTree, opts) {
   const stateCallers = {}
-  stateCallers.callMethod = makeCallMethod(state, opts)
-  stateCallers.callSignal = makeCallSignal(signals, opts)
-  stateCallers.callReducer = makeCallReducer(state, bindings, signals,
-                                             stateCallers, opts)
+  stateCallers.callMethod = makeCallMethod(stateTree, opts)
+  stateCallers.callSignal = makeCallSignal(signalTree, opts)
+  stateCallers.callReducer = makeCallReducer(component, stateTree, bindingTree,
+                                             signalTree, stateCallers, opts)
   return stateCallers
 }
 
@@ -1079,29 +1260,30 @@ export function makeStateCallers (state, bindings, signals, opts) {
 export function run (component, appEl, opts = {}) {
   // Create variables that will store the state for the whole lifetime of the
   // application. Similar to the redux model.
-  let state    = { [TOP]: null }
-  let bindings = { [TOP]: tagType(NODE, { data: appEl, children: null }) }
-  let signals  = { [TOP]: null }
-  const topAddress = [ TOP ]
+  let stateTree    = makeTree(null, false)
+  const topBinding = tagType(NODE, { data: appEl, children: null })
+  let bindingTree = makeTree(topBinding, true)
+  let signalTree  = makeTree(null, true)
 
   // functions that access state, signals, and bindings
-  const stateCallers = makeStateCallers(state, bindings, signals, opts)
+  const stateCallers = makeStateCallers(component, stateTree, bindingTree,
+                                        signalTree, opts)
 
   // first draw
   const initReducer = () => {
     return 'initialState' in opts ? opts.initialState : component.init()
   }
-  stateCallers.callReducer(topAddress, component, initReducer, {})
+  stateCallers.callReducer([], component, initReducer, {})
 
   // return API
-  const localSignals = getTinierState(topAddress, signals).data.signals
-  const reducers = patchReducers(topAddress, component, stateCallers.callReducer)
-  const signalsCall = patchSignals(topAddress, component, stateCallers.callSignal)
-  const methods = patchMethods(topAddress, component, stateCallers.callMethod,
-                               reducers, signalsCall)
-  return { getState: () => state[TOP], signals: localSignals, methods, reducers }
-}
-
-export function forceRenderReducer ({ state }) {
-  return { ...state, [FORCE_RENDER]: {} }
+  const reducers = patchReducers([], component, stateCallers.callReducer)
+  const signalsCall = patchSignals([], component, stateCallers.callSignal)
+  const methods = patchMethods([], component, stateCallers.callMethod, reducers,
+                               signalsCall)
+  return {
+    getState: () => stateTree.get([]),
+    signals: signalTree.get([]).data.signals,
+    methods,
+    reducers,
+  }
 }

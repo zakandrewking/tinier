@@ -1,10 +1,10 @@
 import {
-  ARRAY_OF, OBJECT_OF, COMPONENT, ARRAY, OBJECT, NODE, NULL, TOP, noop, get,
-  isObject, isFunction, map, reduce, zip, filter, tagType, checkType, match,
-  hasChildren, checkRenderResult, updateEl, addressWith, addressEqual,
-  diffWithModel, getState, setState, getTinierState, setTinierState, makeSignal,
-  makeOneSignalAPI, makeChildSignalsAPI, reduceChildren, mergeSignals, objectOf,
-  arrayOf, createComponent, makeStateCallers, run, forceRenderReducer,
+  ARRAY_OF, OBJECT_OF, COMPONENT, ARRAY, OBJECT, NODE, NULL, TOP, CREATE,
+  UPDATE, DESTROY, noop, tail, head, get, isObject, isFunction, map, reduce,
+  zip, filter, tagType, checkType, match, hasChildren, checkRenderResult,
+  updateEl, addressWith, addressEqual, checkState, diffWithModelMin, makeTree,
+  makeSignal, makeOneSignalAPI, makeChildSignalsAPI, reduceChildren,
+  mergeSignals, objectOf, arrayOf, createComponent, makeStateCallers, run,
 } from './tinier'
 
 import { describe, it } from 'mocha'
@@ -27,6 +27,22 @@ const NestedComponent = createComponent({
       }
     }))
   },
+})
+
+describe('tail', () => {
+  it('gets first element and rest', () => {
+    const [ rest, last ] = tail([ 2, 3, 4 ])
+    assert.deepEqual(rest, [ 2, 3 ])
+    assert.strictEqual(last, 4)
+  })
+})
+
+describe('head', () => {
+  it('gets first element and rest', () => {
+    const [ first, rest ] = head([ 2, 3, 4 ])
+    assert.strictEqual(first, 2)
+    assert.deepEqual(rest, [ 3, 4 ])
+  })
 })
 
 describe('get', () => {
@@ -197,15 +213,11 @@ describe('match', () => {
 
 describe('addressWith', () => {
   it('adds a key', () => {
-    const obj = { a: [ 0, { b: 10 } ] }
-    const address = addressWith([ 'a', 1 ], 'b')
-    assert.strictEqual(getState(address, obj), 10)
+    assert.deepEqual(addressWith([ 'a', 1 ], 'b'), [ 'a', 1, 'b' ])
   })
 
   it('returns original if key is null', () => {
-    const obj = { a: [ 0, { b: 10 } ] }
-    const address = addressWith([ 'a', 1 ], null)
-    assert.deepEqual(getState(address, obj), { b: 10 })
+    assert.deepEqual(addressWith([ 'a', 1 ], null), [ 'a', 1 ])
   })
 })
 
@@ -216,26 +228,76 @@ describe('addressEqual', () => {
   })
 })
 
-describe('getState', () => {
-  it('traverses arrays and objects', () => {
-    const obj = { a: [ 0, { b: 10 } ] }
-    assert.strictEqual(getState([ 'a', 1, 'b' ], obj), 10)
+describe('makeTree', () => {
+  it('get traverses arrays and objects', () => {
+    const tree = makeTree({ a: [ 0, { b: 10 } ] }, false)
+    assert.strictEqual(tree.get([ 'a', 1, 'b' ]), 10)
   })
-})
 
-describe('setState', () => {
-  it('sets an object', () => {
-    const object = { a: [ 0, { b: 10 } ] }
-    const address = [ 'a', 1, 'b' ]
-    setState(address, object, 20)
-    assert.strictEqual(getState(address, object), 20)
+  it('set sets an object; mutable', () => {
+    const tree = makeTree([ 0, { b: 10 } ], true)
+    const oldTree = tree.get([])
+    const address = [ 1, 'b' ]
+    tree.set(address, 20)
+    assert.strictEqual(tree.get(address), 20)
+    assert.strictEqual(oldTree, tree.get([]))
   })
-})
 
-describe('getTinierState', () => {
+  it('set sets an object; mutable top level', () => {
+    const tree = makeTree([ 0, { b: 10 } ], true)
+    tree.set([], 20)
+    assert.strictEqual(tree.get([]), 20)
+  })
+
+  it('set sets an object; immutable', () => {
+    const tree = makeTree([ 0, { b: 10 } ], false)
+    const oldTree = tree.get([])
+    const address = [ 1, 'b' ]
+    tree.set(address, 20)
+    assert.strictEqual(tree.get(address), 20)
+    assert.notStrictEqual(oldTree, tree.get([]))
+  })
+
+  it('sets signals', () => {
+    // model: { child1: arrayOf(Child1({ model: { a: [ 0, Child2 ] } })) }
+    const signals = makeTree({
+      child1: tagType(
+        NODE,
+        {
+          data: { signals: [] },
+          children: [ { a: [
+            0,
+          ] } ],
+        }
+      ),
+    }, true)
+    const address = [ 'child1', 0, 'a', 1 ]
+    const newSignals = tagType(NODE, { data: { signals: [ TAG ] }, children: [] })
+    signals.set(address, newSignals)
+    assert.strictEqual(signals.get(address), newSignals)
+  })
+
+  it('sets signals at children', () => {
+    // model: { child1: Child1({ model: { child2: DefComponent } }) }
+    const signals = makeTree({
+      child1: tagType(
+        NODE,
+        {
+          data: { signals: [] },
+          children: {
+            child2: tagType(NODE, { data: { signals: [] }, children: null }),
+          },
+        }),
+    }, true)
+    const address = [ 'child1', 'child2' ]
+    const newSignals = tagType(NODE, { data: { signals: [ TAG ] }, children: [] })
+    signals.set(address, newSignals)
+    assert.deepEqual(signals.get(address), newSignals)
+  })
+
   it('traverses arrays, objects, and children', () => {
     // model: { child1: arrayOf(Child1({ model: { a: [ 0, Child2 ] } })) }
-    const obj = {
+    const signals = makeTree({
       child1: tagType(
         NODE,
         {
@@ -266,72 +328,78 @@ describe('getTinierState', () => {
           ],
         }
       ),
-    }
+    }, true)
     const address = [ 'child1', 0, 'a', 1 ]
-    assert.strictEqual(getTinierState(address, obj).data.signals[0], TAG)
+    assert.strictEqual(signals.get(address).data.signals[0], TAG)
   })
 })
 
-describe('setTinierState', () => {
-  it('sets signals', () => {
-    // model: { child1: arrayOf(Child1({ model: { a: [ 0, Child2 ] } })) }
-    const obj = {
-      child1: tagType(
-        NODE,
-        {
-          data: { signals: [] },
-          children: [ { a: [
-            0,
-          ] } ],
-        }
-      ),
-    }
-    const address = [ 'child1', 0, 'a', 1 ]
-    const newState = tagType(NODE, { data: { signals: [ TAG ] }, children: [] })
-    setTinierState(address, obj, newState)
-    assert.strictEqual(getTinierState(address, obj), newState)
-  })
-
-  it('sets signals at children', () => {
-    // model: { child1: Child1({ model: { child2: DefComponent } }) }
-    const obj = {
-      child1: tagType(
-        NODE,
-        {
-          data: { signals: [] },
-          children: {
-            child2: tagType(NODE, { data: { signals: [] }, children: null }),
-          },
-        }),
-    }
-    const address = [ 'child1', 'child2' ]
-    const newState = tagType(NODE, { data: { signals: [ TAG ] }, children: [] })
-    setTinierState(address, obj, newState)
-    assert.deepEqual(getTinierState(address, obj), newState)
-  })
-})
-
-describe('diffWithModel', () => {
-  it('diffs state by looking at model -- array', () => {
+describe('checkState', () => {
+  it('does nothing for a valid state object', () => {
     const model = { a: arrayOf(DefComponent) }
-    const oldState = { a: [ { x: 10 }, { x: 10 } ] }
-    const newState = { a: [ oldState.a[0], { x: 10 }, { x: 12 } ] }
-    const res = diffWithModel(model, newState, oldState)
-    const expect = { a: [
-      tagType(NODE, {
-        data: { needsCreate: false, needsUpdate: false,  needsDestroy: false },
-        children: {},
-      }),
-      tagType(NODE, {
-        data: { needsCreate: false, needsUpdate: true,  needsDestroy: false },
-        children: {},
-      }),
-      tagType(NODE, {
-        data: { needsCreate: true, needsUpdate: false,  needsDestroy: false },
-        children: {},
-      }),
-    ] }
-    assert.deepEqual(res, expect)
+    const state = { a: [ { x: 10 } ] }
+    checkState(model, state)
+  })
+
+  it('checks for invalid state shape -- object', () => {
+    assert.throws(() => {
+      const model = { a: arrayOf(DefComponent) }
+      const state = [ { b: [ { x: 10 } ] } ]
+      checkState(model, state)
+    }, /Shape of the new state does not match the model/)
+  })
+
+  it('checks for invalid state shape -- array', () => {
+    assert.throws(() => {
+      const model = [ DefComponent ]
+      const state = { b: [ { x: 10 } ] }
+      checkState(model, state)
+    }, /Shape of the new state does not match the model/)
+  })
+
+  it('checks for invalid state shape -- objectOf', () => {
+    assert.throws(() => {
+      const model = { a: objectOf(DefComponent) }
+      const state = { a: [ { x: 10 } ] }
+      checkState(model, state)
+    }, /Shape of the new state does not match the model/)
+  })
+
+  it('checks for invalid state shape -- arrayOf', () => {
+    assert.throws(() => {
+      const model = { a: arrayOf(DefComponent) }
+      const state = { a: { b: { x: 10 } } }
+      checkState(model, state)
+    }, /Shape of the new state does not match the model/)
+  })
+})
+
+describe('diffWithModelMin', () => {
+  it('diffs state by looking at model -- array', () => {
+    const component = createComponent({ model: { a: arrayOf(DefComponent) } })
+    const lastState = { a: [ { x: 10 }, { x: 10 } ] }
+    const state = { a: [ lastState.a[0], { x: 10 }, { x: 12 } ] }
+    const { minSignals, minUpdate } = diffWithModelMin(component, state,
+                                                       lastState, [], [])
+    const expectSignals = [
+      tagType(NODE, { data: null,   children: {} }),
+      tagType(NODE, { data: UPDATE, children: {} }),
+      tagType(NODE, { data: CREATE, children: {} }),
+    ]
+    const expectUpdate = tagType(NODE, {
+      data: UPDATE,
+      children: { a: [
+        tagType(NODE, { data: null,   children: {} }),
+        tagType(NODE, { data: UPDATE, children: {} }),
+        tagType(NODE, { data: CREATE, children: {} }),
+      ] }
+    })
+    assert.deepEqual(minSignals.diff, expectSignals)
+    assert.deepEqual(minUpdate.diff, expectUpdate)
+    assert.deepEqual(minSignals.address, [ 'a' ])
+    assert.deepEqual(minUpdate.address, [])
+    assert.strictEqual(minSignals.modelNode, component.model.a)
+    assert.strictEqual(minUpdate.modelNode, component)
   })
 
   it('diffs state by looking at model -- object nested', () => {
@@ -339,119 +407,86 @@ describe('diffWithModel', () => {
     const model = { e: Child }
     const oldState = { e: { a: { b: { x: 9 },  c: { x: 10 } } } }
     const newState = { e: { a: { c: { x: 11 }, d: { x: 12 } } } }
-    const res = diffWithModel(model, newState, oldState)
+    const { minSignals, minUpdate } = diffWithModelMin(model, newState,
+                                                       oldState, [], [])
     const expect = { e: tagType(NODE, {
-      data: { needsCreate: false, needsUpdate: true, needsDestroy: false },
+      data: UPDATE,
       children: { a: {
-        b: tagType(NODE, {
-          data: { needsCreate: false, needsUpdate: false, needsDestroy: true },
-          children: {},
-        }),
-        c: tagType(NODE, {
-          data: { needsCreate: false, needsUpdate: true, needsDestroy: false },
-          children: {},
-        }),
-        d: tagType(NODE, {
-          data: { needsCreate: true, needsUpdate: false, needsDestroy: false },
-          children: {},
-        }),
+        b: tagType(NODE, { data: DESTROY, children: {} }),
+        c: tagType(NODE, { data: UPDATE, children: {} }),
+        d: tagType(NODE, { data: CREATE, children: {} }),
       } },
     }) }
-    assert.deepEqual(res, expect)
+    assert.deepEqual(minSignals.diff, expect)
+    assert.deepEqual(minUpdate.diff, expect)
+    assert.deepEqual(minSignals.address, [])
+    assert.deepEqual(minUpdate.address, [])
+    assert.strictEqual(minSignals.modelNode, model)
+    assert.strictEqual(minUpdate.modelNode, model)
   })
 
   it('null means do not draw', () => {
     const model = { a: [ DefComponent, DefComponent ], b: [ DefComponent ] }
     const oldState = { a: [ { x: 10 }, { x: 12 } ], b: null }
     const newState = { a: [ { x: 11 }, null ], b: null }
-    const res = diffWithModel(model, newState, oldState)
+    const { minSignals, minUpdate } = diffWithModelMin(model, newState,
+                                                       oldState, [], [])
     const expect = {
       a: [
-        tagType(NODE, {
-          data: { needsCreate: false, needsUpdate: true,  needsDestroy: false },
-          children: {},
-        }),
-        tagType(NODE, {
-          data: { needsCreate: false, needsUpdate: false,  needsDestroy: true },
-          children: {},
-        }),
+        tagType(NODE,  {data: UPDATE, children: {} }),
+        tagType(NODE, { data: DESTROY, children: {} }),
       ],
       b: [
-        tagType(NODE, {
-          data: { needsCreate: false, needsUpdate: false,  needsDestroy: false },
-          children: {},
-        }),
+        tagType(NODE, { data: null, children: {} }),
       ]
     }
-    assert.deepEqual(res, expect)
+    assert.deepEqual(minSignals.diff, expect)
+    assert.deepEqual(minUpdate.diff, expect)
   })
 
   it('absent means do not draw', () => {
     const model = { a: { b: DefComponent } }
     const oldState = { a: { b: 10 } }
     const newState = { a: { } }
-    const res = diffWithModel(model, newState, oldState)
+    const { minSignals, minUpdate } = diffWithModelMin(model, newState,
+                                                       oldState, [], [])
     const expect = { a: {
-      b: tagType(NODE, {
-        data: { needsCreate: false, needsUpdate: false,  needsDestroy: true },
-        children: {},
-      }),
+      b: tagType(NODE, { data: DESTROY, children: {} }),
     } }
-    assert.deepEqual(res, expect)
+    assert.deepEqual(minSignals.diff, expect)
+    assert.deepEqual(minUpdate.diff, expect)
   })
 
   it('accepts null for old state', () => {
     const model = { a: arrayOf(DefComponent) }
     const oldState = null
     const newState = { a: [ { x: 11 }, {} ] }
-    const res = diffWithModel(model, newState, oldState)
+    const { minSignals, minUpdate } = diffWithModelMin(model, newState,
+                                                       oldState, [], [])
     const expect = { a: [
-      tagType(NODE, {
-        data: { needsCreate: true, needsUpdate: false,  needsDestroy: false },
-        children: {},
-      }),
-      tagType(NODE, {
-        data: { needsCreate: true, needsUpdate: false,  needsDestroy: false },
-        children: {},
-      }),
+      tagType(NODE, { data: CREATE, children: {} }),
+      tagType(NODE, { data: CREATE, children: {} }),
     ] }
-    assert.deepEqual(res, expect)
+    assert.deepEqual(minSignals.diff, expect)
+    assert.deepEqual(minUpdate.diff, expect)
   })
 
-  it('checks for invalid state shape -- object', () => {
-    assert.throws(() => {
-      const model = { a: arrayOf(DefComponent) }
-      const oldState = null
-      const newState = [ { b: [ { x: 10 } ] } ]
-      const res = diffWithModel(model, newState, oldState)
-    }, /Shape of the new state does not match the model/)
-  })
-
-  it('checks for invalid state shape -- array', () => {
-    assert.throws(() => {
-      const model = [ DefComponent ]
-      const oldState = null
-      const newState = { b: [ { x: 10 } ] }
-      const res = diffWithModel(model, newState, oldState)
-    }, /Shape of the new state does not match the model/)
-  })
-
-  it('checks for invalid state shape -- objectOf', () => {
-    assert.throws(() => {
-      const model = { a: objectOf(DefComponent) }
-      const oldState = null
-      const newState = { a: [ { x: 10 } ] }
-      const res = diffWithModel(model, newState, oldState)
-    }, /Shape of the new state does not match the model/)
-  })
-
-  it('checks for invalid state shape -- arrayOf', () => {
-    assert.throws(() => {
-      const model = { a: arrayOf(DefComponent) }
-      const oldState = null
-      const newState = { a: { b: { x: 10 } } }
-      const res = diffWithModel(model, newState, oldState)
-    }, /Shape of the new state does not match the model/)
+  it('accepts null for old state 2', () => {
+    const component = createComponent({
+      model: { child: DefComponent }
+    })
+    const oldState = null
+    const newState = { child: { val: 1 } }
+    const { minSignals, minUpdate } = diffWithModelMin(component, newState,
+                                                       oldState, [], [])
+    const expect = tagType(NODE, {
+      data: CREATE,
+      children: {
+        child: tagType(NODE, { data: CREATE, children: {} }),
+      },
+    })
+    assert.deepEqual(minSignals.diff, expect)
+    assert.deepEqual(minUpdate.diff, expect)
   })
 })
 
@@ -511,13 +546,9 @@ describe('checkRenderResult', () => {
 })
 
 describe('updateEl', () => {
-  it('returns null if needsDestroy', () => {
-    const diff = {
-      needsCreate: false,
-      needsUpdate: false,
-      needsDestroy: true,
-    }
-    const { bindings } = updateEl([], DefComponent, {}, diff, EL1, EL1,
+  it('returns null if DESTROY', () => {
+    const diffVal = DESTROY
+    const { bindings } = updateEl([], DefComponent, {}, diffVal, EL1, EL1,
                                   defStateCallers, {})
     assert.isNull(bindings)
   })
@@ -528,8 +559,8 @@ describe('updateEl', () => {
       render: ({ el }) => ({ c: el }),
     })
     const state = { c: {} }
-    const diff = { needsCreate: false, needsUpdate: true, needsDestroy: false }
-    const { bindings } = updateEl([], component, state, diff, EL1, EL1,
+    const diffVal = UPDATE
+    const { bindings } = updateEl([], component, state, diffVal, EL1, EL1,
                                   defStateCallers, {})
     assert.deepEqual(bindings, { c: EL1 })
   })
@@ -540,29 +571,17 @@ describe('updateEl', () => {
       render: ({ el }) => ({ c: el }),
     })
     const state = { c: {} }
-    const diff = { needsCreate: true, needsUpdate: false, needsDestroy: false }
-    const { bindings } = updateEl([], component, state, diff, EL1, EL1,
+    const diffVal = CREATE
+    const { bindings } = updateEl([], component, state, diffVal, EL1, EL1,
                                   defStateCallers, {})
     assert.deepEqual(bindings, { c: EL1 })
-  })
-
-  it('always updates on create', () => {
-    const component = createComponent({
-      render: ({ el }) => el,
-      shouldUpdate: () => false,
-    })
-    const state = { c: {} }
-    const diff = { needsCreate: true, needsUpdate: false, needsDestroy: false }
-    const { bindings } = updateEl([], component, state, diff, EL1, EL1,
-                                  defStateCallers, {})
-    assert.strictEqual(bindings, EL1)
   })
 
   it('updates with new el', () => {
     const component = createComponent({ render: ({ el }) => ({ a: el }) })
     const state = { c: {} }
-    const diff = { needsCreate: false, needsUpdate: true, needsDestroy: false }
-    const { bindings, lastRenderedEl } = updateEl([], component, state, diff,
+    const diffVal = UPDATE
+    const { bindings, lastRenderedEl } = updateEl([], component, state, diffVal,
                                                   EL1, EL2, defStateCallers, {})
     assert.deepEqual(bindings, { a: EL2 })
     assert.strictEqual(lastRenderedEl, EL2)
@@ -571,33 +590,21 @@ describe('updateEl', () => {
   it('old el can be null', () => {
     const component = createComponent({ render: ({ el }) => ({ a: el }) })
     const state = { c: {} }
-    const diff = { needsCreate: false, needsUpdate: true, needsDestroy: false }
-    const { bindings, lastRenderedEl } = updateEl([], component, state, diff,
+    const diffVal = UPDATE
+    const { bindings, lastRenderedEl } = updateEl([], component, state, diffVal,
                                                   null, EL1, defStateCallers, {})
     assert.deepEqual(bindings, { a: EL1 })
     assert.strictEqual(lastRenderedEl, EL1)
   })
 
-  it('shouldUpdate cannot force update', () => {
+  it('does not call shouldUpdate', () => {
     const component = createComponent({
       render: ({ el }) => el,
-      shouldUpdate: () => true,
+      shouldUpdate: () => { throw new Error('NOPE') },
     })
     const state = { c: {} }
-    const diff = { needsCreate: false, needsUpdate: false, needsDestroy: false }
-    const { bindings } = updateEl([], component, state, diff, EL1, EL1,
-                                  defStateCallers, {})
-    assert.isNull(bindings)
-  })
-
-  it('shouldUpdate can stop update', () => {
-    const component = createComponent({
-      render: ({ el }) => el,
-      shouldUpdate: () => false,
-    })
-    const state = { c: {} }
-    const diff = { needsCreate: false, needsUpdate: true, needsDestroy: false }
-    const { bindings } = updateEl([], component, state, diff, EL1, EL1,
+    const diffVal = null
+    const { bindings } = updateEl([], component, state, diffVal, EL1, EL1,
                                   defStateCallers, {})
     assert.isNull(bindings)
   })
@@ -760,16 +767,16 @@ describe('mergeSignals', () => {
     })
 
     // CREATE
-    const state    = { [TOP]: { child: [ {}, {} ] } }
-    const bindings = { [TOP]: null }
-    const signals  = { [TOP]: null }
-    const address = [ TOP ]
-    const stateCallers = makeStateCallers(state, bindings, signals)
-    const localDiff = diffWithModel(Parent, state[TOP], null)
+    const stateTree    = makeTree({ child: [ {}, {} ] }, false)
+    const bindingTree = makeTree(null, true)
+    const signalTree  = makeTree(null, true)
+    const stateCallers = makeStateCallers(Parent, stateTree, bindingTree,
+                                          signalTree)
+    const dOut1 = diffWithModelMin(Parent, stateTree.get([]), null)
 
     // data
-    const signals1 = mergeSignals(Parent, address, localDiff, signals[TOP],
-                                  stateCallers)
+    const signals1 = mergeSignals(Parent, [], dOut1.minSignals.diff,
+                                  signalTree.get([]), stateCallers)
 
     // callSelf
     signals1.children.child[1].data.signals.setChild2.call({ v: 2 })
@@ -784,9 +791,10 @@ describe('mergeSignals', () => {
     assert.strictEqual(valParent, 51)
 
     // UPDATE
-    const localState2 = { child: [ ...state[TOP].child, {} ] }
-    const localDiff2 = diffWithModel(Parent, localState2, state[TOP])
-    const signals2 = mergeSignals(Parent, address, localDiff2, signals1,
+    const localState2 = { child: [ ...stateTree.get([ 'child' ]), {} ] }
+    const dOut2 = diffWithModelMin(Parent, localState2, stateTree.get([]),
+                                        [], [])
+    const signals2 = mergeSignals(Parent, [], dOut2.minSignals.diff, signals1,
                                   stateCallers)
 
     // child -> parent
@@ -801,9 +809,10 @@ describe('mergeSignals', () => {
                        .child.setParent._callFns.length, 3)
 
     // then DESTROY
-    const localState3 = { child: [ state[TOP].child[1] ] }
-    const localDiff3 = diffWithModel(Parent, localState3, localState2)
-    const signals3 = mergeSignals(Parent, address, localDiff3, signals2,
+    const localState3 = { child: [ stateTree.get([ 'child', 1 ]) ] }
+    const dOut3 = diffWithModelMin(Parent, localState3, localState2, [],
+                                        [])
+    const signals3 = mergeSignals(Parent, [], dOut3.minSignals.diff, signals2,
                                   stateCallers)
     valChild1 = ''
     signals3.data.signals.setChild1.call({ v: 'a' })
@@ -886,29 +895,22 @@ describe('run', () => {
     const Child = createComponent({
       displayName: 'Child',
       init: () => ({ val: 1 }),
-      signalNames: [ 'rendered' ],
       render: ({ state, methods, el }) => EL2,
       didUpdate: ({ signals }) => {
-        signals.rendered.call({})
       },
       willUnmount: ({ signals }) => {
-        signals.rendered.call({})
       },
     })
 
     const Parent = createComponent({
       displayName: 'Parent',
       model: { child: arrayOf(Child) },
-      signalSetup: ({ childSignals, reducers }) => {
-        childSignals.child.rendered.onEach(reducers.forceRender.call)
-      },
       init: () => ({ child: [ Child.init() ] }),
       reducers: {
         increment: ({ state }) => ({
           ...state,
           child: [ ...state.child, Child.init() ],
         }),
-        forceRender: forceRenderReducer
       },
       render: ({ state }) => {
         return { child: state.child.map(() => EL1) }
