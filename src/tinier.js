@@ -484,7 +484,7 @@ function treeSet (address, tree, value) {
     return (typeof k === 'string' ?
             { ...tree, [k]: treeSet(rest, treeGet([ k ], tree), value) } :
             [ ...tree.slice(0, k), treeSet(rest, treeGet([ k ], tree), value),
-              ...tree.slice(k - 1) ])
+              ...tree.slice(k + 1) ])
   }
 }
 
@@ -1180,6 +1180,9 @@ function makeCallSignal (signals, opts) {
 export function makeCallReducer (topComponent, stateTree, bindingTree,
                                  signalTree, stateCallers, opts) {
   return (address, triggeringComponent, reducer, arg, name) => {
+    if (!isFunction(reducer)) {
+      throw new Error('Reducer ' + name + ' is not a function')
+    }
     // Run the reducer, and optionally log the result.
     const localState = stateTree.get(address)
     const newLocalState = reducer({ ...arg, state: localState })
@@ -1207,6 +1210,7 @@ export function makeCallReducer (topComponent, stateTree, bindingTree,
     // 3. Return the information about the minimal tree to update with
     //    mergeSignals (whenever nodes are added or deleted) as minSignals.
     // The output objects have the attributes diff, modelNode, and address.
+    // TODO might be best to go back to returning just one full diff here
     const { minSignals, minUpdate } = diffWithModelMin(topComponent,
                                                        stateTree.get([]),
                                                        lastState, [], address)

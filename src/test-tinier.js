@@ -258,6 +258,15 @@ describe('makeTree', () => {
     assert.notStrictEqual(oldTree, tree.get([]))
   })
 
+  it('set sets an object; immutable in array', () => {
+    const tree = makeTree([ 0, { b: 10 } ], false)
+    const oldTree = tree.get([])
+    tree.set([ 1 ], 20)
+    const newTree = tree.get([])
+    assert.deepEqual(newTree, [ 0, 20 ])
+    assert.notStrictEqual(oldTree, newTree)
+  })
+
   it('sets signals', () => {
     // model: { child1: arrayOf(Child1({ model: { a: [ 0, Child2 ] } })) }
     const signals = makeTree({
@@ -381,12 +390,7 @@ describe('diffWithModelMin', () => {
     const state = { a: [ lastState.a[0], { x: 10 }, { x: 12 } ] }
     const { minSignals, minUpdate } = diffWithModelMin(component, state,
                                                        lastState, [], [])
-    const expectSignals = [
-      tagType(NODE, { data: null,   children: {} }),
-      tagType(NODE, { data: UPDATE, children: {} }),
-      tagType(NODE, { data: CREATE, children: {} }),
-    ]
-    const expectUpdate = tagType(NODE, {
+    const expect = tagType(NODE, {
       data: UPDATE,
       children: { a: [
         tagType(NODE, { data: null,   children: {} }),
@@ -394,11 +398,11 @@ describe('diffWithModelMin', () => {
         tagType(NODE, { data: CREATE, children: {} }),
       ] }
     })
-    assert.deepEqual(minSignals.diff, expectSignals)
-    assert.deepEqual(minUpdate.diff, expectUpdate)
-    assert.deepEqual(minSignals.address, [ 'a' ])
+    assert.deepEqual(minSignals.diff, expect)
+    assert.deepEqual(minUpdate.diff, expect)
+    assert.deepEqual(minSignals.address, [])
     assert.deepEqual(minUpdate.address, [])
-    assert.strictEqual(minSignals.modelNode, component.model.a)
+    assert.strictEqual(minSignals.modelNode, component)
     assert.strictEqual(minUpdate.modelNode, component)
   })
 
