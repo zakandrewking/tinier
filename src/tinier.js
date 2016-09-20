@@ -8,6 +8,7 @@ export const ARRAY     = '@TINIER_ARRAY'
 export const OBJECT    = '@TINIER_OBJECT'
 export const NODE      = '@TINIER_NODE'
 export const NULL      = '@TINIER_NULL'
+export const STRING    = '@TINIER_STRING'
 export const TOP       = '@TINIER_TOP'
 export const CREATE    = '@TINIER_CREATE'
 export const UPDATE    = '@TINIER_UPDATE'
@@ -78,6 +79,10 @@ export function isArray (object) {
   return Array.isArray(object)
 }
 
+export function isString (v) {
+  return typeof v === 'string'
+}
+
 /**
  * Check if the object is a function.
  * @param {*} object - The object to test.
@@ -98,37 +103,27 @@ function notNull (val) {
  * @param {Function} fn - A function that takes the arguments (value, key).
  * @return {Object} A transformed object with values returned by the function.
  */
-function mapValues (obj, fn) {
-  return Object.keys(obj).reduce((c, v) => {
-    return { ...c, [v]: fn(obj[v], v) }
-  }, {})
+export function mapValues (obj, fn) {
+  const newObj = {}
+  for (let key in obj) {
+    newObj[key] = fn(obj[key], key)
+  }
+  return newObj
 }
 
-/**
- * Use map for Array and mapValues for Object.
- * @param {Object} obj - The input object or array.
- * @param {Function} fn - A function that takes the arguments (value, key/index).
- * @return {Object} A transformed object/array with values returned by the
- *                  function.
- */
-export function map (obj, fn) {
-  return isArray(obj) ? obj.map(fn) : mapValues(obj, fn)
+export function reduceValues (obj, fn, init) {
+  let accum = init
+  for (let key in obj) {
+    accum = fn(accum, obj[key], key)
+  }
+  return accum
 }
 
-function reduceValues (obj, fn, init) {
-  return Object.keys(obj).reduce((accum, k) => fn(accum, obj[k], k), init)
-}
-
-export function reduce (obj, fn, init) {
-  return isArray(obj) ? obj.reduce(fn, init) : reduceValues(obj, fn, init)
-}
-
-function zipArrays (arrays) {
-  const lenLongest = Math.max.apply(null, map(filter(arrays, x => x !== null),
-                                              a => a.length))
+export function zipArrays (arrays) {
+  const lenLongest = Math.max.apply(null, arrays.filter(x => x !== null).map(a => a.length))
   const res = []
   for (let i = 0; i < lenLongest; i++) {
-    res.push(map(arrays, a => a !== null && i < a.length ? a[i] : null))
+    res.push(arrays.map(a => a !== null && i < a.length ? a[i] : null))
   }
   return res
 }
@@ -137,15 +132,11 @@ function flatten (arrays) {
   return Array.prototype.concat(...arrays)
 }
 
-function zipObjects (objects) {
-  const allKeys = flatten(map(filter(objects, x => x !== null), Object.keys))
-  return fromPairs(map(allKeys, k => {
+export function zipObjects (objects) {
+  const allKeys = flatten(objects.filter(x => x !== null).map(Object.keys))
+  return fromPairs(allKeys.map(k => {
     return [ k, objects.map(o => o !== null && k in o ? o[k] : null) ]
   }))
-}
-
-export function zip (vals) {
-  return isArray(get(vals, 0)) ? zipArrays(vals) : zipObjects(vals)
 }
 
 export function filterValues (object, fn) {
@@ -155,10 +146,6 @@ export function filterValues (object, fn) {
     if (fn(value, key)) out[key] = value
   }
   return out
-}
-
-export function filter (obj, fn) {
-  return isArray(obj) ? obj.filter(fn) : filterValues(obj, fn)
 }
 
 // TODO make this lazy
@@ -190,8 +177,8 @@ export function checkType (type, obj) {
   if (typeof type !== 'string') {
     throw new Error('First argument must be a string')
   }
-  if (!isObject(obj)) {
-    throw new Error('Second argument must be an object or null')
+  if (isUndefined(obj)) {
+    throw new Error('Bad second argument')
   }
   return get(obj, 'type') === type
 }
@@ -260,7 +247,7 @@ function checkRenderResultRecurse (userBindings, node, state) {
   match(
     node,
     {
-      [OBJECT_OF]: node => {
+      [OBJECT_OF]: objOf => {
         // check for extra attributes
         if (userBindings !== null
             && any(Object.keys(userBindings).map(k => !(k in state)))) {
@@ -268,36 +255,36 @@ function checkRenderResultRecurse (userBindings, node, state) {
                           'model. Model: ' + node + ' Bindings object: ' +
                           userBindings)
         } else {
-          map(state, updateRecurse)
+          mapValues(state, updateRecurse)
         }
       },
-      [ARRAY_OF]:  node => {
+      [ARRAY_OF]: arOf => {
         // check array lengths
         if (userBindings !== null && state.length !== userBindings.length) {
           throw new Error('Shape of the bindings object does not match the ' +
                           'model. Model: ' + node + ' Bindings object: ' +
                           userBindings)
         } else {
-          map(state, updateRecurse)
+          state.map(updateRecurse)
         }
       },
-      [COMPONENT]: node => updateRecurse(state, null),
-      [ARRAY]:  node => {
+      [COMPONENT]: component => updateRecurse(state, null),
+      [ARRAY]: ar => {
         if (userBindings !== null && !isArray(userBindings)) {
           throw new Error('Shape of the bindings object does not match the ' +
                           'model. Model: ' + node + ' Bindings object: ' +
                           userBindings)
         } else {
-          map(node, recurse)
+          ar.map(recurse)
         }
       },
-      [OBJECT]: node => {
+      [OBJECT]: obj => {
         if (userBindings !== null && isArray(userBindings)) {
           throw new Error('Shape of the bindings object does not match the ' +
                           'model. Model: ' + node + ' Bindings object: ' +
                           userBindings)
         } else {
-          map(node, recurse)
+          mapValues(obj, recurse)
         }
       }
     }
@@ -387,8 +374,8 @@ export function updateEl (address, component, state, diffVal, lastRenderedEl, el
 function dropNodes (tree) {
   return match(tree, {
     [NODE]: node => node.data,
-    [OBJECT]: node => map(node, dropNodes),
-    [ARRAY]: node => map(node, dropNodes),
+    [OBJECT]: obj => mapValues(obj, dropNodes),
+    [ARRAY]: ar => ar.map(dropNodes),
   })
 }
 
@@ -424,23 +411,23 @@ function updateComponents (address, node, state, diff, bindings, renderResult,
                                       nextRenderResult, stateCallers, opts)
     return tagType(NODE, { data, children })
   }
-  const mapRecurse = node => map(node, (n, k) => {
+  const recurse = (n, k) => {
     return updateComponents(addressWith(address, k), n, get(state, k), diff[k],
                             get(bindings, k), get(renderResult, k),
                             stateCallers, opts)
-  })
+  }
   return match(
     node,
     {
       [OBJECT_OF]: objOf => {
-        return map(zip([ diff, state ]), updateRecurse)
+        return mapValues(zipObjects([ diff, state ]), updateRecurse)
       },
-      [ARRAY_OF]:  arOf => {
-        return map(zip([ diff, state ]), updateRecurse)
+      [ARRAY_OF]: arOf => {
+        return zipArrays([ diff, state ]).map(updateRecurse)
       },
       [COMPONENT]: component => updateRecurse([ diff, state ], null),
-      [ARRAY]:  mapRecurse,
-      [OBJECT]: mapRecurse,
+      [ARRAY]: ar => ar.map(recurse),
+      [OBJECT]: obj => mapValues(obj, recurse),
     })
 }
 
@@ -449,7 +436,13 @@ function updateComponents (address, node, state, diff, bindings, renderResult,
 // -------------------------------------------------------------------
 
 export function addressWith (address, key) {
-  return key === null ? address : [ ...address, key ]
+  if (key === null) {
+    return address
+  } else {
+    const newAddress = address.slice(0)
+    newAddress.push(key)
+    return newAddress
+  }
 }
 
 export function addressEqual (a1, a2) {
@@ -536,7 +529,7 @@ export function checkState (modelNode, newState) {
         throw new Error('Shape of the new state does not match the model. ' +
                         'Model: ' + objOf + '  State: ' + newState)
       } else {
-        map(newState, s => checkState(modelNode.component.model, s))
+        mapValues(newState, s => checkState(modelNode.component.model, s))
       }
     },
     [ARRAY_OF]: arOf => {
@@ -544,7 +537,7 @@ export function checkState (modelNode, newState) {
         throw new Error('Shape of the new state does not match the model.' +
                         'Model: ' + arOf + '  State: ' + newState)
       } else {
-        map(newState, s => checkState(modelNode.component.model, s))
+        newState.map(s => checkState(modelNode.component.model, s))
       }
     },
     [COMPONENT]: component => {
@@ -555,7 +548,7 @@ export function checkState (modelNode, newState) {
         throw new Error('Shape of the new state does not match the model.' +
                         'Model: ' + ar + '  State: ' + newState)
       } else {
-        map(ar, (a, i) => checkState(a, get(newState, i)))
+        ar.map((a, i) => checkState(a, get(newState, i)))
       }
     },
     [OBJECT]: obj => {
@@ -563,7 +556,7 @@ export function checkState (modelNode, newState) {
         throw new Error('Shape of the new state does not match the model. ' +
                         'Model: ' + obj + '  State: ' + newState)
       } else {
-        map(obj, (o, k) => checkState(o, get(newState, k)))
+        mapValues(obj, (o, k) => checkState(o, get(newState, k)))
       }
     },
   })
@@ -607,11 +600,12 @@ function diffWithModel (modelNode, state, lastState, address,
         return mapValues(l, function (_, k) {
           const data = computeDiffValue(state, lastState, k, isValidFn,
                                         objOf.component.shouldUpdate,
-                                        addressWith(k), triggeringAddress)
+                                        addressWith(address, k),
+                                        triggeringAddress)
           const children = diffWithModel(objOf.component.model,
                                          get(state, k),
                                          get(lastState, k),
-                                         addressWith(k),
+                                         addressWith(address, k),
                                          triggeringAddress)
           return tagType(NODE, { data, children })
         })
@@ -626,11 +620,11 @@ function diffWithModel (modelNode, state, lastState, address,
         return l.map(function (_, i) {
           const data = computeDiffValue(state, lastState, i, isValidFn,
                                         arOf.component.shouldUpdate,
-                                        addressWith(i), triggeringAddress)
+                                        addressWith(address, i), triggeringAddress)
           const children = diffWithModel(arOf.component.model,
                                          get(state, i),
                                          get(lastState, i),
-                                         addressWith(i),
+                                         addressWith(address, i),
                                          triggeringAddress)
           return tagType(NODE, { data, children })
         })
@@ -648,13 +642,13 @@ function diffWithModel (modelNode, state, lastState, address,
       [ARRAY]: ar => {
         return ar.map((n, i) => {
           return diffWithModel(n, get(state, i), get(lastState, i),
-                               addressWith(i), triggeringAddress)
+                               addressWith(address, i), triggeringAddress)
         })
       },
       [OBJECT]: obj => {
-        return map(obj, (n, k) => {
+        return mapValues(obj, (n, k) => {
           return diffWithModel(n, get(state, k), get(lastState, k),
-                               addressWith(k), triggeringAddress)
+                               addressWith(address, k), triggeringAddress)
         })
       },
     })
@@ -766,7 +760,7 @@ export function makeSignal () {
     }
     res._onFns = [ ...res._onFns, fn ]
   }
-  res.call = (...args) => map(res._onFns, fn => fn(...args))
+  res.call = (...args) => res._onFns.map(fn => fn(...args))
   return res
 }
 
@@ -819,17 +813,14 @@ function makeSignalsAPI (signalNames, isCollection) {
  * Implement the childSignals API.
  */
 export function makeChildSignalsAPI (model) {
-  const mapFilterRecurse = node => {
-    return filter(map(node, makeChildSignalsAPI), notNull)
-  }
   return match(
     model,
     {
       [OBJECT_OF]: node => makeSignalsAPI(node.component.signalNames, true),
       [ARRAY_OF]:  node => makeSignalsAPI(node.component.signalNames, true),
       [COMPONENT]: node => makeSignalsAPI(node.signalNames, false),
-      [ARRAY]:  mapFilterRecurse,
-      [OBJECT]: mapFilterRecurse,
+      [ARRAY]: ar => ar.map(makeChildSignalsAPI).filter(notNull),
+      [OBJECT]: obj => filterValues(mapValues(obj, makeChildSignalsAPI), notNull),
     },
     constant(null)
   )
@@ -845,15 +836,18 @@ export function makeChildSignalsAPI (model) {
  */
 export function reduceChildren (node, fn, init, address = []) {
   const stateRecurse = node => fn(init, node.data, address)
-  const reduceRecurse = node => {
-    return reduce(node, (accum, n, k) => {
-      return reduceChildren(n, fn, accum, addressWith(address, k))
-    }, init)
-  }
   return match(node, {
     [NODE]: stateRecurse,
-    [ARRAY]: reduceRecurse,
-    [OBJECT]: reduceRecurse,
+    [ARRAY]: ar => {
+      return ar.reduce((accum, n, k) => {
+        return reduceChildren(n, fn, accum, addressWith(address, k))
+      }, init)
+    },
+    [OBJECT]: obj => {
+      return reduceValues(obj, (accum, n, k) => {
+        return reduceChildren(n, fn, accum, addressWith(address, k))
+      }, init)
+    },
   }, constant(init))
 }
 
@@ -908,8 +902,8 @@ export function mergeSignals (node, address, diffNode, signalNode, stateCallers,
                                                              newAddress,
                                                              stateCallers)
       const newUpAddress = upAddress === null ? null : addressWith(upAddress, k)
-      const signals = map(
-        zip([ signalsAPI, upChild ]),
+      const signals = mapValues(
+        zipObjects([ signalsAPI, upChild ]),
         ([ callbackObj, upCallbackObj ], key) => {
           const signal = makeSignal()
 
@@ -956,7 +950,7 @@ export function mergeSignals (node, address, diffNode, signalNode, stateCallers,
       )
 
       // if there are deleted children, delete references to them
-      map(destroyed, childAddress => {
+      destroyed.map(childAddress => {
         // get the right child within childSignalsAPI
         const childSignalsAPINode = childAddress.reduce((accum, k, i) => {
           if (k in accum) {
@@ -968,7 +962,7 @@ export function mergeSignals (node, address, diffNode, signalNode, stateCallers,
                             s.data.childSignalsAPI)
           }
         }, s.data.childSignalsAPI)
-        map(childSignalsAPINode, obj => {
+        mapValues(childSignalsAPINode, obj => {
           // remove the matching callFns
           obj._callFns = obj._callFns.filter(({ address }) => {
             return !addressEqual(address, childAddress)
@@ -992,15 +986,15 @@ export function mergeSignals (node, address, diffNode, signalNode, stateCallers,
   }
 
   return match(node, {
-    [OBJECT_OF]: node => {
-      return filter(map(zip([ diffNode, signalNode ]), updateRecurse), notNull)
+    [OBJECT_OF]: objOf => {
+      return filterValues(mapValues(zipObjects([ diffNode, signalNode ]), updateRecurse), notNull)
     },
-    [ARRAY_OF]: node => {
-      return filter(map(zip([ diffNode, signalNode ]), updateRecurse), notNull)
+    [ARRAY_OF]: arOf => {
+      return zipArrays([ diffNode, signalNode ]).map(updateRecurse).filter(notNull)
     },
-    [COMPONENT]: node => updateRecurse([ diffNode, signalNode ], null),
-    [ARRAY]:  node => map(zip([ node, diffNode, signalNode, upChild ]), recurse),
-    [OBJECT]: node => map(zip([ node, diffNode, signalNode, upChild ]), recurse),
+    [COMPONENT]: component => updateRecurse([ diffNode, signalNode ], null),
+    [ARRAY]: ar => zipArrays([ ar, diffNode, signalNode, upChild ]).map(recurse),
+    [OBJECT]: obj => mapValues(zipObjects([ obj, diffNode, signalNode, upChild ]), recurse),
   }, constant(null))
 }
 
@@ -1088,7 +1082,7 @@ export function createComponent (options = {}) {
 }
 
 function patchReducers (address, component, callReducer) {
-  return map(component.reducers, (reducer, name) => {
+  return mapValues(component.reducers, (reducer, name) => {
     return function (arg) {
       callReducer(address, component, reducer, arg, name)
     }
@@ -1096,7 +1090,7 @@ function patchReducers (address, component, callReducer) {
 }
 
 function patchSignals (address, component, callSignal) {
-  return fromPairs(map(component.signalNames, signalName => {
+  return fromPairs(component.signalNames.map(signalName => {
     return [
       signalName,
       { call: arg => callSignal(address, signalName, arg) }
@@ -1109,7 +1103,7 @@ function patchSignals (address, component, callSignal) {
  * arguments.
  */
 export function patchMethods (address, component, callMethod, reducers, signals) {
-  const methods = map(component.methods, method => {
+  const methods = mapValues(component.methods, method => {
     return function (arg) {
       if (typeof Event !== 'undefined' && arg instanceof Event) {
         callMethod(address, method, signals, methods, reducers, this, arg, {})

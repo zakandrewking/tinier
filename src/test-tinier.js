@@ -1,10 +1,11 @@
 import {
   ARRAY_OF, OBJECT_OF, COMPONENT, ARRAY, OBJECT, NODE, NULL, TOP, CREATE,
-  UPDATE, DESTROY, noop, tail, head, get, isObject, isFunction, map, reduce,
-  zip, filter, tagType, checkType, match, hasChildren, checkRenderResult,
-  updateEl, addressWith, addressEqual, checkState, diffWithModelMin, makeTree,
-  makeSignal, makeOneSignalAPI, makeChildSignalsAPI, reduceChildren,
-  mergeSignals, objectOf, arrayOf, createComponent, makeStateCallers, run,
+  UPDATE, DESTROY, noop, tail, head, get, isObject, isFunction, mapValues,
+  reduceValues, zipArrays, zipObjects, filterValues, tagType, checkType, match,
+  hasChildren, checkRenderResult, updateEl, addressWith, addressEqual,
+  checkState, diffWithModelMin, makeTree, makeSignal, makeOneSignalAPI,
+  makeChildSignalsAPI, reduceChildren, mergeSignals, objectOf, arrayOf,
+  createComponent, makeStateCallers, run,
 } from './tinier'
 
 import { describe, it } from 'mocha'
@@ -95,59 +96,61 @@ describe('isFunction', () => {
   })
 })
 
-describe('map', () => {
+describe('mapValues', () => {
   it('iterates over keys for objects', () => {
     const obj = { a: 1, b: 2 }
-    const res = map(obj, (x, k) => k + String(x + 1))
+    const res = mapValues(obj, (x, k) => k + String(x + 1))
     assert.deepEqual({ a: 'a2', b: 'b3' }, res)
   })
 
-  it('iterates over indices for arrays', () => {
-    const arr = [ 1, 2 ]
-    const res = map(arr, (x, i) => i + String(x + 1))
-    assert.deepEqual([ '02', '13' ], res)
-  })
+  // it('iterates over indices for arrays', () => {
+  //   const arr = [ 1, 2 ]
+  //   const res = map(arr, (x, i) => i + String(x + 1))
+  //   assert.deepEqual([ '02', '13' ], res)
+  // })
 })
 
-describe('reduce', () => {
+describe('reduceValues', () => {
   it('iterates over keys for objects', () => {
     const obj = { a: 1, b: 2 }
-    const res = reduce(obj, (accum, x, k) => accum + x, 0)
+    const res = reduceValues(obj, (accum, x, k) => accum + x, 0)
     assert.deepEqual(res, 3)
   })
 
-  it('iterates over indices for arrays', () => {
-    const arr = [ 1, 2 ]
-    const res = reduce(arr, (accum, x, i) => accum + x, 0)
-    assert.deepEqual(res, 3)
-  })
+  // it('iterates over indices for arrays', () => {
+  //   const arr = [ 1, 2 ]
+  //   const res = reduce(arr, (accum, x, i) => accum + x, 0)
+  //   assert.deepEqual(res, 3)
+  // })
 })
 
-describe('zip', () => {
+describe('zipArrays', () => {
   it('zips and fills null', () => {
     const arrays = [ [ 1, 2 ], [ 3 ], null ]
     const expect = [ [ 1, 3, null ], [ 2, null, null ] ]
-    assert.deepEqual(zip(arrays), expect)
-  })
-
-  it('zips objects and fills null', () => {
-    const objects = [ { a: 1, b: 2 }, { a: 3, c: 4 }, null ]
-    const expect = { a: [ 1, 3, null ], b: [ 2, null, null ], c: [ null, 4, null ] }
-    assert.deepEqual(zip(objects), expect)
+    assert.deepEqual(zipArrays(arrays), expect)
   })
 })
 
-describe('filter', () => {
+describe('zipObjects', () => {
+  it('zips objects and fills null', () => {
+    const objects = [ { a: 1, b: 2 }, { a: 3, c: 4 }, null ]
+    const expect = { a: [ 1, 3, null ], b: [ 2, null, null ], c: [ null, 4, null ] }
+    assert.deepEqual(zipObjects(objects), expect)
+  })
+})
+
+describe('filterValues', () => {
   it('filters an object', () => {
     const obj = { a: 1, b: 2 }
-    const res = filter(obj, a => a === 1)
+    const res = filterValues(obj, a => a === 1)
     assert.deepEqual(res, { a: 1 })
   })
-  it('filters an array', () => {
-    const arr = [ 1, 2 ]
-    const res = filter(arr, a => a === 1)
-    assert.deepEqual(res, [ 1 ])
-  })
+  // it('filters an array', () => {
+  //   const arr = [ 1, 2 ]
+  //   const res = filter(arr, a => a === 1)
+  //   assert.deepEqual(res, [ 1 ])
+  // })
 })
 
 describe('tagType', () => {
@@ -179,10 +182,10 @@ describe('checkType', () => {
     }, 'First argument must be a string')
   })
 
-  it('checks for object', () => {
+  it('checks for second argument', () => {
     assert.throws(() => {
-      checkType('TAG', 'TAG')
-    }, 'Second argument must be an object')
+      checkType('TAG')
+    }, 'Bad second argument')
   })
 })
 
@@ -776,7 +779,7 @@ describe('mergeSignals', () => {
     const signalTree  = makeTree(null, true)
     const stateCallers = makeStateCallers(Parent, stateTree, bindingTree,
                                           signalTree)
-    const dOut1 = diffWithModelMin(Parent, stateTree.get([]), null)
+    const dOut1 = diffWithModelMin(Parent, stateTree.get([]), null, [], [])
 
     // data
     const signals1 = mergeSignals(Parent, [], dOut1.minSignals.diff,
