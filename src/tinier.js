@@ -853,9 +853,8 @@ export function makeChildSignalsAPI (model) {
  * @return {*}
  */
 export function reduceChildren (node, fn, init, address = []) {
-  const stateRecurse = node => fn(init, node.data, address)
   return match(node, {
-    [NODE]: stateRecurse,
+    [NODE]: node => fn(init, node.data, address),
     [ARRAY]: ar => {
       return ar.reduce((accum, n, k) => {
         return reduceChildren(n, fn, accum, addressWith(address, k))
