@@ -56,7 +56,7 @@ export function get (object, property) {
           object.hasOwnProperty(property)) ? object[property] : null
 }
 
-function isUndefined (object) {
+export function isUndefined (object) {
   return typeof object === 'undefined'
 }
 
@@ -92,7 +92,7 @@ export function isFunction (object) {
   return typeof(object) === 'function'
 }
 
-function notNull (val) {
+export function notNull (val) {
   return val !== null
 }
 
@@ -128,15 +128,29 @@ export function zipArrays (arrays) {
   return res
 }
 
-function flatten (arrays) {
-  return Array.prototype.concat(...arrays)
-}
-
 export function zipObjects (objects) {
-  const allKeys = flatten(objects.filter(x => x !== null).map(Object.keys))
-  return fromPairs(allKeys.map(k => {
-    return [ k, objects.map(o => o !== null && k in o ? o[k] : null) ]
-  }))
+  const len = objects.length
+  // find all the keys
+  const allKeys = {}
+  for (let i = 0; i < len; i++) {
+    const object = objects[i]
+    if (object === null) {
+      continue
+    }
+    for (let k in object) {
+      allKeys[k] = true
+    }
+  }
+  // make new object
+  const res = {}
+  for (let key in allKeys) {
+    res[key] = Array(len)
+    for (let i = 0; i < len; i++) {
+      const object = objects[i]
+      res[key][i] = get(object, key)
+    }
+  }
+  return res
 }
 
 export function filterValues (object, fn) {
@@ -160,6 +174,9 @@ function defer (fn) {
   setTimeout(fn, 1)
 }
 
+/**
+ * Adds a tag to the object.
+ */
 export function tagType (type, obj) {
   if (typeof type !== 'string') {
     throw new Error('First argument must be a string')
@@ -167,7 +184,8 @@ export function tagType (type, obj) {
   if (!isObject(obj)) {
     throw new Error('Second argument must be an object')
   }
-  return { ...obj, type }
+  obj.type = type
+  return obj
 }
 
 export function checkType (type, obj) {
