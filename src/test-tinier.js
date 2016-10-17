@@ -102,12 +102,6 @@ describe('mapValues', () => {
     const res = mapValues(obj, (x, k) => k + String(x + 1))
     assert.deepEqual({ a: 'a2', b: 'b3' }, res)
   })
-
-  // it('iterates over indices for arrays', () => {
-  //   const arr = [ 1, 2 ]
-  //   const res = map(arr, (x, i) => i + String(x + 1))
-  //   assert.deepEqual([ '02', '13' ], res)
-  // })
 })
 
 describe('reduceValues', () => {
@@ -116,12 +110,6 @@ describe('reduceValues', () => {
     const res = reduceValues(obj, (accum, x, k) => accum + x, 0)
     assert.deepEqual(res, 3)
   })
-
-  // it('iterates over indices for arrays', () => {
-  //   const arr = [ 1, 2 ]
-  //   const res = reduce(arr, (accum, x, i) => accum + x, 0)
-  //   assert.deepEqual(res, 3)
-  // })
 })
 
 describe('zipArrays', () => {
@@ -146,11 +134,6 @@ describe('filterValues', () => {
     const res = filterValues(obj, a => a === 1)
     assert.deepEqual(res, { a: 1 })
   })
-  // it('filters an array', () => {
-  //   const arr = [ 1, 2 ]
-  //   const res = filter(arr, a => a === 1)
-  //   assert.deepEqual(res, [ 1 ])
-  // })
 })
 
 describe('tagType', () => {
@@ -891,10 +874,11 @@ describe('run', () => {
       render: () => ({ child: EL2 }),
     })
 
-    const { getState, signals, methods } = run(Parent, EL1)
+    const { getState, setState, signals } = run(Parent, EL1)
     signals.add.call({ v: 2 })
     assert.strictEqual(getState().child.val, 2)
-    methods.add({ v: 3 })
+    const curState = getState()
+    setState({ ...curState, child: { ...curState.child, val: 3 } })
     assert.strictEqual(getState().child.val, 3)
   })
 
@@ -913,6 +897,10 @@ describe('run', () => {
       displayName: 'Parent',
       model: { child: arrayOf(Child) },
       init: () => ({ child: [ Child.init() ] }),
+      signalNames: [ 'increment' ],
+      signalSetup: ({ signals, reducers }) => {
+        signals.increment.on(reducers.increment)
+      },
       reducers: {
         increment: ({ state }) => ({
           ...state,
@@ -924,9 +912,9 @@ describe('run', () => {
       },
     })
 
-    const { reducers } = run(Parent, EL1, { verbose: true })
+    const { signals } = run(Parent, EL1, { verbose: true })
     // When the didUpdate and willUnmount functions are called synchronously,
     // the bindings get out of balance, so this should test for that.
-    reducers.increment()
+    signals.increment.call({})
   })
 })

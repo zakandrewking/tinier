@@ -1,18 +1,22 @@
 /** @module tinier */
 
 // constants
-export const ARRAY_OF  = '@TINIER_ARRAY_OF'
-export const OBJECT_OF = '@TINIER_OBJECT_OF'
-export const COMPONENT = '@TINIER_COMPONENT'
-export const ARRAY     = '@TINIER_ARRAY'
-export const OBJECT    = '@TINIER_OBJECT'
-export const NODE      = '@TINIER_NODE'
-export const NULL      = '@TINIER_NULL'
-export const STRING    = '@TINIER_STRING'
-export const TOP       = '@TINIER_TOP'
-export const CREATE    = '@TINIER_CREATE'
-export const UPDATE    = '@TINIER_UPDATE'
-export const DESTROY   = '@TINIER_DESTROY'
+export const ARRAY_OF    = '@TINIER_ARRAY_OF'
+export const OBJECT_OF   = '@TINIER_OBJECT_OF'
+export const COMPONENT   = '@TINIER_COMPONENT'
+export const INTERFACE   = '@TINIER_INTERFACE'
+export const ARRAY       = '@TINIER_ARRAY'
+export const OBJECT      = '@TINIER_OBJECT'
+export const NODE        = '@TINIER_NODE'
+export const NULL        = '@TINIER_NULL'
+export const STRING      = '@TINIER_STRING'
+export const NUMBER      = '@TINIER_NUMBER'
+export const BOOLEAN     = '@TINIER_BOOLEAN'
+export const NO_ARGUMENT = '@TINIER_NO_ARGUMENT'
+export const TOP         = '@TINIER_TOP'
+export const CREATE      = '@TINIER_CREATE'
+export const UPDATE      = '@TINIER_UPDATE'
+export const DESTROY     = '@TINIER_DESTROY'
 
 // basic functions
 function noop () {}
@@ -1043,6 +1047,14 @@ function defaultShouldUpdate ({ state, lastState }) {
   return state !== lastState
 }
 
+function checkInputs (options, defaults) {
+  mapValues(options, (_, k) => {
+    if (!(k in defaults)) {
+      console.error('Unexpected argument ' + k)
+    }
+  })
+}
+
 /**
  * Create a tinier component.
  * @param {Object} componentArgs - Functions defining the Tinier component.
@@ -1084,11 +1096,7 @@ export function createComponent (options = {}) {
     render:       noop,
   }
   // check inputs
-  mapValues(options, (_, k) => {
-    if (!(k in defaults)) {
-      console.error('Unexpected argument ' + k)
-    }
-  })
+  checkInputs(options, defaults)
   // check model
   if (options.model && checkType(COMPONENT, options.model)) {
     throw new Error('The model cannot be another Component. The top level of ' +
@@ -1288,17 +1296,49 @@ export function run (component, appEl, opts = {}) {
   const initReducer = () => {
     return 'initialState' in opts ? opts.initialState : component.init()
   }
-  stateCallers.callReducer([], component, initReducer, {})
+  stateCallers.callReducer([], component, initReducer, {}, 'initialState')
 
   // return API
   const reducers = patchReducers([], component, stateCallers.callReducer)
   const signalsCall = patchSignals([], component, stateCallers.callSignal)
   const methods = patchMethods([], component, stateCallers.callMethod, reducers,
                                signalsCall)
+
+  // TODO take out methods and reducers, add addState, to mirror interfaces
+  const setStateReducer = ({ state, newState }) => newState
   return {
     getState: () => stateTree.get([]),
+    setState: newState => {
+      return stateCallers.callReducer([], component, setStateReducer,
+                                      { newState }, 'setState')
+    },
     signals: signalTree.get([]).data.signals,
-    methods,
-    reducers,
   }
+}
+
+// -------------------------------------------------------------------
+// Interfaces
+// -------------------------------------------------------------------
+
+export function createInterface (options = {}) {
+  const defaults = {
+    state: {},
+    signals: {},
+  }
+  return tagType(INTERFACE, { ...defaults, ...options })
+}
+
+
+export const interfaceTypes = {
+  string: tagType(STRING, { default: null }),
+  stringWithDefault: def => tagType(STRING, { default: def }),
+  number: tagType(NUMBER, { default: null }),
+  numberWithDefault: def => tagType(NUMBER, { default: def }),
+  boolean: tagType(BOOLEAN, { default: null }),
+  booleanWithDefault: def => tagType(BOOLEAN, { default: def }),
+  arrayOf: tagType(ARRAY_OF, { default: null }),
+  arrayOfWithDefault: def => tagType(ARRAY_OF, { default: def }),
+  objectOf: tagType(OBJECT_OF, { default: null }),
+  objectOfWithDefault: def => tagType(OBJECT_OF, { default: def }),
+  noArgument: tagType(NO_ARGUMENT, {}),
 }
