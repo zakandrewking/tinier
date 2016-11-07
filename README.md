@@ -90,3 +90,49 @@ function shouldUpdate ({ state, lastState }) {
 ```
 
 ## API
+
+### tinier.createComponent({ ...args })
+
+Arguments as `args` object:
+
+- *displayName*: `String`, default '' - A display name for the component mainly
+  used for debugging.
+- *model*:
+- *init*: (Object) => Object, Default
+- *signalNames*: `[String]`, default `[]` - A list of signal names as strings.
+- *interface*: `tinier.Interface | null`, default `null` - A Tinier Interface.
+
+### tinier.createInterface({ ...args })
+
+Arguments as `args` object:
+
+- *state*: An object that defines the required state for the model. It can
+  contain nested object and array, and interface types defined below.
+
+- *signals*: An object with keys for signal names and values define the type
+  passed to a signal. For instance, to require a signal named `changeState` that
+  can be passed a Boolean, you would create the following interface:
+
+```
+import { createInterface, interfaceTypes } from 'tinier'
+
+const Interface = createInterface({
+  signalTypes: { changeState: interfaceTypes.boolean }
+})
+
+An interface is used by passing it to the `interface` argument of
+`createComponent`.
+
+### tinier.interfaceTypes
+
+- tinier.interfaceTypes.string
+- tinier.interfaceTypes.stringWithDefault
+- tinier.interfaceTypes.number
+- tinier.interfaceTypes.numberWithDefault
+- tinier.interfaceTypes.boolean
+- tinier.interfaceTypes.booleanWithDefault
+- tinier.interfaceTypes.arrayOf
+- tinier.interfaceTypes.arrayOfWithDefault
+- tinier.interfaceTypes.objectOf
+- tinier.interfaceTypes.objectOfWithDefault
+- tinier.interfaceTypes.noArgument

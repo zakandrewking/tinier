@@ -2,10 +2,11 @@ import {
   ARRAY_OF, OBJECT_OF, COMPONENT, ARRAY, OBJECT, NODE, NULL, TOP, CREATE,
   UPDATE, DESTROY, noop, tail, head, get, isObject, isFunction, mapValues,
   reduceValues, zipArrays, zipObjects, filterValues, tagType, checkType, match,
-  hasChildren, checkRenderResult, updateEl, addressWith, addressEqual,
-  checkState, diffWithModelMin, makeTree, makeSignal, makeOneSignalAPI,
-  makeChildSignalsAPI, reduceChildren, mergeSignals, objectOf, arrayOf,
-  createComponent, makeStateCallers, run,
+  createInterface, interfaceTypes, checkInterfaceType, hasChildren,
+  checkRenderResult, updateEl, addressWith, addressEqual, checkState,
+  diffWithModelMin, makeTree, makeSignal, makeOneSignalAPI, makeChildSignalsAPI,
+  reduceChildren, mergeSignals, objectOf, arrayOf, createComponent,
+  makeStateCallers, run,
 } from './tinier'
 
 import { describe, it } from 'mocha'
@@ -477,6 +478,38 @@ describe('diffWithModelMin', () => {
     })
     assert.deepEqual(minSignals.diff, expect)
     assert.deepEqual(minUpdate.diff, expect)
+  })
+})
+
+describe('checkInterfaceType', () => {
+  it('compares strings', () => {
+    assert.isTrue(checkInterfaceType(interfaceTypes.string, 'a'))
+    assert.isFalse(checkInterfaceType(interfaceTypes.string, 0))
+    assert.isFalse(checkInterfaceType(interfaceTypes.string, {}))
+  })
+
+  it('looks for no argument', () => {
+    assert.isTrue(checkInterfaceType(interfaceTypes.noArgument, (arg => arg)()))
+    assert.isFalse(checkInterfaceType(interfaceTypes.noArgument,
+                                      (arg => arg)(1)))
+  })
+
+  it('compares nested types -- object', () => {
+    const type = { a: interfaceTypes.string, b: interfaceTypes.number }
+    assert.isTrue(checkInterfaceType(type, { a: '1', b: 1 }))
+    assert.isFalse(checkInterfaceType(type, { b: '1', a: 1 }))
+  })
+
+  it('compares nested types -- array', () => {
+    const type = [ interfaceTypes.string, { a: interfaceTypes.number } ]
+    assert.isTrue(checkInterfaceType(type, [ '1', { a: 1 } ]))
+    assert.isFalse(checkInterfaceType(type, [ '1', { a: 1 }, 2 ]))
+  })
+
+  it('accepts any', () => {
+    assert.isTrue(checkInterfaceType(interfaceTypes.any, 0))
+    assert.isTrue(checkInterfaceType(interfaceTypes.any, {}))
+    assert.isTrue(checkInterfaceType(interfaceTypes.any, checkInterfaceType))
   })
 })
 
