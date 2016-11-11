@@ -20,11 +20,6 @@ And it is on NPM:
 
 https://www.npmjs.com/package/tinier
 
-## TinierDOM
-
-Tinier can be used with [TinierDOM](https://github.com/zakandrewking/tinier-dom)
-for React-style DOM definitions that use JSX.
-
 ## Components
 
 Tinier components are created with the `createComponent` function.
