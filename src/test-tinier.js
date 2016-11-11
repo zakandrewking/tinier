@@ -1,18 +1,33 @@
 /* global global */
 
+// public API
+
+import tinier from './tinier'
+const arrayOf = tinier.arrayOf
+const objectOf = tinier.objectOf
+const createComponent = tinier.createComponent
+const run = tinier.run
+const bind = tinier.bind
+const createElement = tinier.createElement
+const render = tinier.render
+
+// private API
+
 import {
   ARRAY_OF, OBJECT_OF, COMPONENT, ARRAY, OBJECT, NODE, NULL, TOP, CREATE,
-  UPDATE, DESTROY, noop, tail, head, get, isObject, isFunction, mapValues,
-  reduceValues, zipArrays, zipObjects, filterValues, tagType, checkType, match,
-  createInterface, interfaceTypes, checkInterfaceType, hasChildren,
-  checkRenderResult, updateEl, addressWith, addressEqual, checkState,
-  diffWithModelMin, makeTree, makeSignal, makeOneSignalAPI, makeChildSignalsAPI,
-  reduceChildren, mergeSignals, objectOf, arrayOf, createComponent,
-  makeStateCallers, run, ELEMENT, BINDING, addressToObj, h, bind,
-  createDOMElement, getStyles, updateDOMElement, objectForBindings, render,
+  UPDATE, DESTROY, noop, tail, head, fromPairs, get, isUndefined, isObject,
+  isArray, isFunction, mapValues, reduceValues, zipArrays, zipObjects,
+  filterValues, tagType, checkType, match, createInterface, interfaceTypes,
+  checkInterfaceType, hasChildren, checkRenderResult, updateEl, addressWith,
+  addressEqual, checkState, diffWithModelMin, makeTree, makeSignal,
+  makeOneSignalAPI, makeChildSignalsAPI, reduceChildren, mergeSignals,
+  makeStateCallers, ELEMENT, BINDING, addressToObj, objectForBindings,
+  createDOMElement, getStyles, updateDOMElement,
 } from './tinier'
 
-import { describe, it } from 'mocha'
+// testing functions
+
+import { describe, it, afterEach } from 'mocha'
 import { assert } from 'chai'
 
 // DOM setup
@@ -53,6 +68,8 @@ const NestedComponent = createComponent({
   },
 })
 
+// tests
+
 describe('tail', () => {
   it('gets first element and rest', () => {
     const [ rest, last ] = tail([ 2, 3, 4 ])
@@ -66,6 +83,13 @@ describe('head', () => {
     const [ first, rest ] = head([ 2, 3, 4 ])
     assert.strictEqual(first, 2)
     assert.deepEqual(rest, [ 3, 4 ])
+  })
+})
+
+describe('fromPairs', () => {
+  it('creates an object', () => {
+    const res = fromPairs([ [ 'k', 0 ], [ 'j', 1 ] ])
+    assert.deepEqual(res, { k: 0, j: 1 })
   })
 })
 
@@ -93,6 +117,12 @@ describe('get', () => {
   })
 })
 
+describe('isUndefined', () => {
+  it('true for undefined', () => {
+    assert.isTrue(isUndefined(undefined))
+  })
+})
+
 describe('isObject', () => {
   it('is true for object literals', () => {
     assert.isTrue(isObject({ a: 10 }))
@@ -106,6 +136,12 @@ describe('isObject', () => {
     assert.isFalse(isObject(() => [ 10 ]))
     assert.isFalse(isObject(10))
     assert.isFalse(isObject('10'))
+  })
+})
+
+describe('isArray', () => {
+  it('true for array', () => {
+    assert.isTrue(isArray([]))
   })
 })
 
@@ -984,17 +1020,17 @@ describe('addressToObj', () => {
   })
 })
 
-describe('h', () => {
+describe('createElement', () => {
   it('returns an object', () => {
     assert.deepEqual(
-      h('div'),
+      createElement('div'),
       { tagName: 'div', attributes: {}, children: [], type: ELEMENT }
     )
   })
 
   it('takes children as an array', () => {
     assert.deepEqual(
-      h('div', null, 'a', 'b'),
+      createElement('div', null, 'a', 'b'),
       { tagName: 'div', attributes: {}, children: [ 'a', 'b' ], type: ELEMENT }
     )
   })
@@ -1014,7 +1050,7 @@ describe('bind', () => {
 
 describe('createDOMElement', () => {
   it('choose correct namespace -- html', () => {
-    const tEl = h('html', { 'href': 'http://a.com',
+    const tEl = createElement('html', { 'href': 'http://a.com',
                             'xlink:href': 'http://b.com', })
     const el = createDOMElement(tEl, document.body)
     // check element namespace
@@ -1027,23 +1063,23 @@ describe('createDOMElement', () => {
   })
 
   it('choose correct namespace -- svg', () => {
-    assert.strictEqual(createDOMElement(h('svg'), document.body).namespaceURI,
+    assert.strictEqual(createDOMElement(createElement('svg'), document.body).namespaceURI,
                        'http://www.w3.org/2000/svg')
   })
 
   it('choose correct namespace -- inherit', () => {
-    const svg = createDOMElement(h('svg'), document.body)
-    assert.strictEqual(createDOMElement(h('g'), document.body).namespaceURI,
+    const svg = createDOMElement(createElement('svg'), document.body)
+    assert.strictEqual(createDOMElement(createElement('g'), document.body).namespaceURI,
                        'http://www.w3.org/1999/xhtml')
-    assert.strictEqual(createDOMElement(h('g'), svg).namespaceURI,
+    assert.strictEqual(createDOMElement(createElement('g'), svg).namespaceURI,
                        'http://www.w3.org/2000/svg')
   })
 
   it('choose correct namespace -- explicit', () => {
-    assert.strictEqual(createDOMElement(h('svg:g'), document.body).namespaceURI,
+    assert.strictEqual(createDOMElement(createElement('svg:g'), document.body).namespaceURI,
                        'http://www.w3.org/2000/svg')
     // keep xmlns prefix
-    assert.strictEqual(createDOMElement(h('xmlns:g'), document.body).namespaceURI,
+    assert.strictEqual(createDOMElement(createElement('xmlns:g'), document.body).namespaceURI,
                        'http://www.w3.org/2000/xmlns/')
   })
 })
@@ -1125,13 +1161,14 @@ describe('objectForBindings', () => {
   it('arrays', () => {
     const ar3 = Array(3)
     ar3[2] = 'c'
-    const res = objectForBindings([ [ null, 'b', null, 'd', 0 ], [ 'a' ], ar3 ])
+    const res = objectForBindings([ [ null, 'b', null, 'd', 0 ], [ 'a' ],
+                                           ar3 ])
     assert.deepEqual(res, [ 'a', 'b', 'c', 'd', 0 ])
   })
 
   it('objects', () => {
     const res = objectForBindings([ { a: 1 }, { b: 2, c: [ 3 ] },
-                                    { c: [ null, 4 ]} ])
+                                           { c: [ null, 4 ]} ])
     assert.deepEqual(res, { a: 1, b: 2, c: [ 3, 4 ] })
   })
 })

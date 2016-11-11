@@ -42,7 +42,7 @@ export function head (array) {
   return [ array[0], array.slice(1) ]
 }
 
-function fromPairs (pairs) {
+export function fromPairs (pairs) {
   return pairs.reduce((accum, [ key, val ]) => {
     return { ...accum, [key]: val }
   }, {})
@@ -1565,7 +1565,7 @@ const isElement = v => v instanceof Element
  *                                               elements and strings.
  * @return {Object} A TinierDOM element.
  */
-export function h (tagName, attributesIn, ...children) {
+export function createElement (tagName, attributesIn, ...children) {
   const attributes = attributesIn == null ? {} : attributesIn
   return tagType(ELEMENT, { tagName, attributes, children })
 }
@@ -1858,4 +1858,10 @@ export function render (container, ...tinierElementsAr) {
 
   // bindings array to object
   return objectForBindings(bindingsAr.filter(b => b !== null))
+}
+
+// export API
+export default {
+  createInterface, interfaceTypes, arrayOf, objectOf, createComponent, run,
+  bind, createElement, render,
 }
