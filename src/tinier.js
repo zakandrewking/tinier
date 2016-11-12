@@ -4,7 +4,6 @@
 export const ARRAY_OF    = '@TINIER_ARRAY_OF'
 export const OBJECT_OF   = '@TINIER_OBJECT_OF'
 export const COMPONENT   = '@TINIER_COMPONENT'
-export const INTERFACE   = '@TINIER_INTERFACE'
 export const ARRAY       = '@TINIER_ARRAY'
 export const OBJECT      = '@TINIER_OBJECT'
 export const NODE        = '@TINIER_NODE'
@@ -256,65 +255,6 @@ export function match (object, fns, defaultFn = throwUnrecognizedType) {
 function throwUnrecognizedType (node) {
   throw new Error('Unrecognized type in pattern matching: ' + node)
 }
-
-// -------------------------------------------------------------------
-// Interfaces
-// -------------------------------------------------------------------
-
-// export function createInterface (options = {}) {
-//   const defaults = {
-//     state: {},
-//     signals: {},
-//   }
-//   return tagType(INTERFACE, { ...defaults, ...options })
-// }
-
-// export const interfaceTypes = {
-//   string: nullDefType(STRING),
-//   number: nullDefType(NUMBER),
-//   boolean: nullDefType(BOOLEAN),
-//   any: nullDefType(ANY),
-//   noArgument: NO_ARGUMENT,
-// }
-
-// export function checkInterfaceType (type, val) {
-//   if (type === ANY) {
-//     return true
-//   } else if (type === STRING) {
-//     return isString(val)
-//   } else if (type === NUMBER) {
-//     return isNumber(val)
-//   } else if (type === BOOLEAN) {
-//     return isBoolean(val)
-//   } else if (type === NO_ARGUMENT) {
-//     return isUndefined(val)
-//   } else if (isObject(type)) {
-//     return isObject(val) && reduceValues(zipObjects([ type, val ]), (accum, [ t, v ]) => {
-//       return accum && t !== null && checkInterfaceType(t, v)
-//     }, true)
-//   } else if (isArray(type)) {
-//     return isArray(val) && zipArrays([ type, val ]).reduce((accum, [ t, v ]) => {
-//       return accum && t !== null && checkInterfaceType(t, v)
-//     }, true)
-//   } else {
-//     throw new Error('Unrecognized interface type ' + type)
-//   }
-// }
-
-// function initForInterface (theInterface) {
-//   return arg => {
-//     if (!checkInterfaceType(theInterface.state, arg)) {
-//       throw new Error('New state does not match interface. ' +
-//                       theInterface.state, ' -- ' + arg)
-//     }
-//     if (isUndefined(arg)) {
-//       // defaults
-//       return getDefaults(theInterface.state)
-//     } else {
-//       return arg
-//     }
-//   }
-// }
 
 // -------------------------------------------------------------------
 // Update components
@@ -906,10 +846,10 @@ export function makeOneSignalAPI (isCollection) {
 /**
  * Implement the signals API.
  */
-function makeSignalsAPI (signalsObj, isCollection) {
-  return mapValues(signalsObj, _ => {
-    return makeOneSignalAPI(isCollection)
-  })
+function makeSignalsAPI (signalNames, isCollection) {
+  return fromPairs(signalNames.map(name => {
+    return [ name, makeOneSignalAPI(isCollection) ]
+  }))
 }
 
 /**
@@ -919,9 +859,9 @@ export function makeChildSignalsAPI (model) {
   return match(
     model,
     {
-      [OBJECT_OF]: node => makeSignalsAPI(node.component.signals, true),
-      [ARRAY_OF]:  node => makeSignalsAPI(node.component.signals, true),
-      [COMPONENT]: node => makeSignalsAPI(node.signals, false),
+      [OBJECT_OF]: node => makeSignalsAPI(node.component.signalNames, true),
+      [ARRAY_OF]:  node => makeSignalsAPI(node.component.signalNames, true),
+      [COMPONENT]: node => makeSignalsAPI(node.signalNames, false),
       [ARRAY]: ar => ar.map(makeChildSignalsAPI).filter(notNull),
       [OBJECT]: obj => filterValues(mapValues(obj, makeChildSignalsAPI), notNull),
     },
@@ -961,7 +901,7 @@ export function reduceChildren (node, fn, init, address = []) {
  * @return {Object} Object with keys signalsAPI and childSignalsAPI.
  */
 function runSignalSetup (component, address, stateCallers) {
-  const signalsAPI = makeSignalsAPI(component.signals, false)
+  const signalsAPI = makeSignalsAPI(component.signalNames, false)
   const childSignalsAPI = makeChildSignalsAPI(component.model)
   const reducers = patchReducers(address, component, stateCallers.callReducer)
   const signals = patchSignals(address, component, stateCallers.callSignal)
@@ -1162,7 +1102,6 @@ export function createComponent (options = {}) {
   // default attributes
   const defaults = {
     displayName:  '',
-    // interface:    null,
     signalNames:  [],
     signalSetup:  noop,
     model:        {},
@@ -1179,34 +1118,6 @@ export function createComponent (options = {}) {
   }
   // check inputs
   checkInputs(options, defaults)
-
-  // // set up interface
-  // if ('interface' in options && options.interface !== null) {
-  //   // convert signalNames to common interface
-  //   if (!checkType(INTERFACE, options.interface)) {
-  //     throw new Error('The interface provided is not a Tinier Interface object.')
-  //   }
-  //   if ('signalNames' in options) {
-  //     console.warn('Option signalNames is ignored when an interface is provided')
-  //   }
-  //   options.signals = options.interface.signals
-
-  //   // add the new init function for interface
-  //   const interfaceInit = initForInterface(options.interface)
-  //   if ('init' in options) {
-  //     const oldInit = options.init
-  //     const newInit = arg => oldInit(interfaceInit(arg))
-  //     options.init = newInit
-  //   } else {
-  //     options.init = interfaceInit
-  //   }
-  // } else if ('signalNames' in options) {
-  //   options.signals = fromPairs(options.signalNames.map(name => {
-  //     return [ name, interfaceTypes.any ]
-  //   }))
-  // } else {
-  //   options.signals = {}
-  // }
 
   // check model
   if (options.model && checkType(COMPONENT, options.model)) {
@@ -1226,17 +1137,12 @@ function patchReducers (address, component, callReducer) {
 }
 
 function patchSignals (address, component, callSignal) {
-  return mapValues(component.signals, (signalName, type) => {
-    return {
-      call: arg => {
-        if (!checkInterfaceType(type, arg)) {
-          throw new Error('Signal ' + signalName + ' was passed a value that' +
-                          'does not match type ' + type + '. Value: ' + arg)
-        }
-        return callSignal(address, signalName, arg)
-      },
-    }
-  })
+  return fromPairs(component.signalNames.map(signalName => {
+    return [
+      signalName,
+      { call: arg => callSignal(address, signalName, arg) }
+    ]
+  }))
 }
 
 /**
@@ -1875,6 +1781,5 @@ export function render (container, ...tinierElementsAr) {
 
 // export API
 export default {
-  createInterface, interfaceTypes, arrayOf, objectOf, createComponent, run,
-  bind, createElement, render,
+  arrayOf, objectOf, createComponent, run, bind, createElement, render,
 }
