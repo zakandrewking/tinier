@@ -17,12 +17,11 @@ import {
   ARRAY_OF, OBJECT_OF, COMPONENT, ARRAY, OBJECT, NODE, NULL, TOP, CREATE,
   UPDATE, DESTROY, noop, tail, head, fromPairs, get, isUndefined, isObject,
   isArray, isFunction, mapValues, reduceValues, zipArrays, zipObjects,
-  filterValues, tagType, checkType, match, createInterface, interfaceTypes,
-  checkInterfaceType, hasChildren, checkRenderResult, updateEl, addressWith,
-  addressEqual, checkState, diffWithModelMin, makeTree, makeSignal,
-  makeOneSignalAPI, makeChildSignalsAPI, reduceChildren, mergeSignals,
-  makeStateCallers, ELEMENT, BINDING, addressToObj, objectForBindings,
-  createDOMElement, getStyles, updateDOMElement,
+  filterValues, any, tagType, checkType, match, hasChildren, checkRenderResult,
+  updateEl, addressWith, addressEqual, checkState, diffWithModelMin, makeTree,
+  makeSignal, makeOneSignalAPI, makeChildSignalsAPI, reduceChildren,
+  mergeSignals, makeStateCallers, ELEMENT, BINDING, addressToObj,
+  objectForBindings, createDOMElement, getStyles, updateDOMElement,
 } from './tinier'
 
 // testing functions
@@ -195,6 +194,23 @@ describe('filterValues', () => {
   })
 })
 
+describe('any', () => {
+  it('looks for true', () => {
+    const ar = [ false, true, false ]
+    assert.isTrue(any(ar))
+  })
+
+  it('only accepts boolean', () => {
+    assert.throws(() => {
+      any([ false, false, 1 ])
+    })
+  })
+
+  it('looks for true; lazy', () => {
+    assert.isTrue(any([ false, true, 1 ]))
+  })
+})
+
 describe('tagType', () => {
   it('returns a new object with the type', () => {
     assert.deepEqual(tagType('TAG', { a: 10 }), { a: 10, type: 'TAG' })
@@ -255,6 +271,68 @@ describe('match', () => {
     assert.strictEqual(result, 10)
   })
 })
+
+// describe('interfaces', () => {
+//   it('create and check', () => {
+//     const Interface = createInterface({
+//       state: {
+//         a: interfaceTypes.string.default('d1').nullable,
+//         b: interfaceTypes.number.default(3),
+//         c: interfaceTypes.boolean,
+//         d: { e: interfaceTypes.any },
+//         f: [ interfaceTypes.null ],
+//       },
+//       signals: {},
+//       reducerNames: [],
+//     })
+//     const test1 = {
+//       a: null,
+//       b: 4,
+//       c: true,
+//       d: { e: 'aa' },
+//       f: [ null ],
+//     }
+//     assert.isTrue(checkInterfaceType(Interface.state, test1))
+//   })
+
+//   it('defaults must match type', () => {
+//     assert.throws(() => {
+//       interfaceTypes.string.default(1)
+//     })
+//   })
+// })
+
+// describe('checkInterfaceType', () => {
+//   it('compares strings', () => {
+//     assert.isTrue(checkInterfaceType(interfaceTypes.string, 'a'))
+//     assert.isFalse(checkInterfaceType(interfaceTypes.string, 0))
+//     assert.isFalse(checkInterfaceType(interfaceTypes.string, {}))
+//   })
+
+//   it('looks for no argument', () => {
+//     assert.isTrue(checkInterfaceType(interfaceTypes.noArgument, (arg => arg)()))
+//     assert.isFalse(checkInterfaceType(interfaceTypes.noArgument,
+//                                       (arg => arg)(1)))
+//   })
+
+//   it('compares nested types -- object', () => {
+//     const type = { a: interfaceTypes.string, b: interfaceTypes.number }
+//     assert.isTrue(checkInterfaceType(type, { a: '1', b: 1 }))
+//     assert.isFalse(checkInterfaceType(type, { b: '1', a: 1 }))
+//   })
+
+//   it('compares nested types -- array', () => {
+//     const type = [ interfaceTypes.string, { a: interfaceTypes.number } ]
+//     assert.isTrue(checkInterfaceType(type, [ '1', { a: 1 } ]))
+//     assert.isFalse(checkInterfaceType(type, [ '1', { a: 1 }, 2 ]))
+//   })
+
+//   it('accepts any', () => {
+//     assert.isTrue(checkInterfaceType(interfaceTypes.any, 0))
+//     assert.isTrue(checkInterfaceType(interfaceTypes.any, {}))
+//     assert.isTrue(checkInterfaceType(interfaceTypes.any, checkInterfaceType))
+//   })
+// })
 
 describe('addressWith', () => {
   it('adds a key', () => {
@@ -539,37 +617,9 @@ describe('diffWithModelMin', () => {
   })
 })
 
-describe('checkInterfaceType', () => {
-  it('compares strings', () => {
-    assert.isTrue(checkInterfaceType(interfaceTypes.string, 'a'))
-    assert.isFalse(checkInterfaceType(interfaceTypes.string, 0))
-    assert.isFalse(checkInterfaceType(interfaceTypes.string, {}))
-  })
-
-  it('looks for no argument', () => {
-    assert.isTrue(checkInterfaceType(interfaceTypes.noArgument, (arg => arg)()))
-    assert.isFalse(checkInterfaceType(interfaceTypes.noArgument,
-                                      (arg => arg)(1)))
-  })
-
-  it('compares nested types -- object', () => {
-    const type = { a: interfaceTypes.string, b: interfaceTypes.number }
-    assert.isTrue(checkInterfaceType(type, { a: '1', b: 1 }))
-    assert.isFalse(checkInterfaceType(type, { b: '1', a: 1 }))
-  })
-
-  it('compares nested types -- array', () => {
-    const type = [ interfaceTypes.string, { a: interfaceTypes.number } ]
-    assert.isTrue(checkInterfaceType(type, [ '1', { a: 1 } ]))
-    assert.isFalse(checkInterfaceType(type, [ '1', { a: 1 }, 2 ]))
-  })
-
-  it('accepts any', () => {
-    assert.isTrue(checkInterfaceType(interfaceTypes.any, 0))
-    assert.isTrue(checkInterfaceType(interfaceTypes.any, {}))
-    assert.isTrue(checkInterfaceType(interfaceTypes.any, checkInterfaceType))
-  })
-})
+// -------------------------------------------------------------------
+// Update components
+// -------------------------------------------------------------------
 
 describe('hasChildren', () => {
   it('checks for children', () => {

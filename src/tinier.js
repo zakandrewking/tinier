@@ -168,16 +168,29 @@ export function zipObjects (objects) {
 
 export function filterValues (object, fn) {
   const out = {}
-  for (var key in object) {
+  for (let key in object) {
     const value = object[key]
     if (fn(value, key)) out[key] = value
   }
   return out
 }
 
-// TODO make this lazy
-function any (ar) {
-  return ar.reduce((accum, val) => accum || val, false)
+/**
+ * Lazy any function.
+ * @param {[Boolean]}
+ * @return {Boolean}
+ */
+export function any (ar) {
+  for (let i = 0, l = ar.length; i < l; i++) {
+    const val = ar[i]
+    if (!isBoolean(val)) {
+      throw new Error('Not a boolean: ' + val)
+    }
+    if (val) {
+      return true
+    }
+  }
+  return false
 }
 
 /**
@@ -191,7 +204,7 @@ function defer (fn) {
  * Adds a tag to the object.
  */
 export function tagType (type, obj) {
-  if (typeof type !== 'string') {
+  if (!isString(type)) {
     throw new Error('First argument must be a string')
   }
   if (!isObject(obj)) {
@@ -248,60 +261,60 @@ function throwUnrecognizedType (node) {
 // Interfaces
 // -------------------------------------------------------------------
 
-export function createInterface (options = {}) {
-  const defaults = {
-    state: {},
-    signals: {},
-  }
-  return tagType(INTERFACE, { ...defaults, ...options })
-}
+// export function createInterface (options = {}) {
+//   const defaults = {
+//     state: {},
+//     signals: {},
+//   }
+//   return tagType(INTERFACE, { ...defaults, ...options })
+// }
 
-export const interfaceTypes = {
-  string: STRING,
-  number: NUMBER,
-  boolean: BOOLEAN,
-  any: ANY,
-  noArgument: NO_ARGUMENT,
-}
+// export const interfaceTypes = {
+//   string: nullDefType(STRING),
+//   number: nullDefType(NUMBER),
+//   boolean: nullDefType(BOOLEAN),
+//   any: nullDefType(ANY),
+//   noArgument: NO_ARGUMENT,
+// }
 
-export function checkInterfaceType (type, val) {
-  if (type === ANY) {
-    return true
-  } else if (type === STRING) {
-    return isString(val)
-  } else if (type === NUMBER) {
-    return isNumber(val)
-  } else if (type === BOOLEAN) {
-    return isBoolean(val)
-  } else if (type === NO_ARGUMENT) {
-    return isUndefined(val)
-  } else if (isObject(type)) {
-    return isObject(val) && reduceValues(zipObjects([ type, val ]), (accum, [ t, v ]) => {
-      return accum && t !== null && checkInterfaceType(t, v)
-    }, true)
-  } else if (isArray(type)) {
-    return isArray(val) && zipArrays([ type, val ]).reduce((accum, [ t, v ]) => {
-      return accum && t !== null && checkInterfaceType(t, v)
-    }, true)
-  } else {
-    throw new Error('Unrecognized interface type ' + type)
-  }
-}
+// export function checkInterfaceType (type, val) {
+//   if (type === ANY) {
+//     return true
+//   } else if (type === STRING) {
+//     return isString(val)
+//   } else if (type === NUMBER) {
+//     return isNumber(val)
+//   } else if (type === BOOLEAN) {
+//     return isBoolean(val)
+//   } else if (type === NO_ARGUMENT) {
+//     return isUndefined(val)
+//   } else if (isObject(type)) {
+//     return isObject(val) && reduceValues(zipObjects([ type, val ]), (accum, [ t, v ]) => {
+//       return accum && t !== null && checkInterfaceType(t, v)
+//     }, true)
+//   } else if (isArray(type)) {
+//     return isArray(val) && zipArrays([ type, val ]).reduce((accum, [ t, v ]) => {
+//       return accum && t !== null && checkInterfaceType(t, v)
+//     }, true)
+//   } else {
+//     throw new Error('Unrecognized interface type ' + type)
+//   }
+// }
 
-function initForInterface (theInterface) {
-  return arg => {
-    if (!checkInterfaceType(theInterface.state, arg)) {
-      throw new Error('New state does not match interface. ' +
-                      theInterface.state, ' -- ' + arg)
-    }
-    if (isUndefined(arg)) {
-      // defaults
-      return getDefaults(theInterface.state)
-    } else {
-      return arg
-    }
-  }
-}
+// function initForInterface (theInterface) {
+//   return arg => {
+//     if (!checkInterfaceType(theInterface.state, arg)) {
+//       throw new Error('New state does not match interface. ' +
+//                       theInterface.state, ' -- ' + arg)
+//     }
+//     if (isUndefined(arg)) {
+//       // defaults
+//       return getDefaults(theInterface.state)
+//     } else {
+//       return arg
+//     }
+//   }
+// }
 
 // -------------------------------------------------------------------
 // Update components
@@ -1149,7 +1162,7 @@ export function createComponent (options = {}) {
   // default attributes
   const defaults = {
     displayName:  '',
-    interface:    null,
+    // interface:    null,
     signalNames:  [],
     signalSetup:  noop,
     model:        {},
@@ -1167,33 +1180,33 @@ export function createComponent (options = {}) {
   // check inputs
   checkInputs(options, defaults)
 
-  // set up interface
-  if ('interface' in options && options.interface !== null) {
-    // convert signalNames to common interface
-    if (!checkType(INTERFACE, options.interface)) {
-      throw new Error('The interface provided is not a Tinier Interface object.')
-    }
-    if ('signalNames' in options) {
-      console.warn('Option signalNames is ignored when an interface is provided')
-    }
-    options.signals = options.interface.signals
+  // // set up interface
+  // if ('interface' in options && options.interface !== null) {
+  //   // convert signalNames to common interface
+  //   if (!checkType(INTERFACE, options.interface)) {
+  //     throw new Error('The interface provided is not a Tinier Interface object.')
+  //   }
+  //   if ('signalNames' in options) {
+  //     console.warn('Option signalNames is ignored when an interface is provided')
+  //   }
+  //   options.signals = options.interface.signals
 
-    // add the new init function for interface
-    const interfaceInit = initForInterface(options.interface)
-    if ('init' in options) {
-      const oldInit = options.init
-      const newInit = arg => oldInit(interfaceInit(arg))
-      options.init = newInit
-    } else {
-      options.init = interfaceInit
-    }
-  } else if ('signalNames' in options) {
-    options.signals = fromPairs(options.signalNames.map(name => {
-      return [ name, interfaceTypes.any ]
-    }))
-  } else {
-    options.signals = {}
-  }
+  //   // add the new init function for interface
+  //   const interfaceInit = initForInterface(options.interface)
+  //   if ('init' in options) {
+  //     const oldInit = options.init
+  //     const newInit = arg => oldInit(interfaceInit(arg))
+  //     options.init = newInit
+  //   } else {
+  //     options.init = interfaceInit
+  //   }
+  // } else if ('signalNames' in options) {
+  //   options.signals = fromPairs(options.signalNames.map(name => {
+  //     return [ name, interfaceTypes.any ]
+  //   }))
+  // } else {
+  //   options.signals = {}
+  // }
 
   // check model
   if (options.model && checkType(COMPONENT, options.model)) {
