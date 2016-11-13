@@ -961,6 +961,52 @@ describe('createComponent', () => {
       createComponent({ model: DefComponent })
     }, /cannot be another Component/)
   })
+
+  it('does not allow null for state', () => {
+    const Component = createComponent({
+      reducers: {
+        a: () => null
+      }
+    })
+    const { reducers } = run(Component, EL1)
+    assert.throws(() => {
+      reducers.a()
+    }, /A component state cannot be null/)
+  })
+
+  it('makes sure reducers accept 1 or 0 arguments', () => {
+    const C1 = createComponent({
+      reducers: {
+        a: () => { return {} }
+      },
+      methods: {
+        ok: ({ reducers }) => {
+          reducers.a()
+          reducers.a({})
+        },
+        bad1: ({ reducers }) => {
+          reducers.a({}, 2)
+        },
+        bad2: ({ reducers }) => {
+          reducers.a('not an object')
+        },
+      },
+    })
+    C1.reducers.a()
+    C1.reducers.a({})
+    assert.throws(() => C1.reducers.a({}, 2))
+    assert.throws(() => C1.reducers.a('not an object'))
+    // with the run API
+    const { methods, reducers } = run(C1, EL1)
+    reducers.a()
+    reducers.a({})
+    assert.throws(() => reducers.a({}, 2))
+    assert.throws(() => reducers.a('not an object'))
+    methods.ok()
+    methods.ok({})
+    assert.throws(() => methods.bad1())
+    assert.throws(() => methods.bad2({}))
+  })
 })
 
 describe('run', () => {

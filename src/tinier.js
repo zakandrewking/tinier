@@ -362,7 +362,7 @@ export function checkRenderResult (userBindings, node, state) {
 export function updateEl (address, component, state, diffVal, lastRenderedEl, el,
                           stateCallers, opts) {
   // the object passed to lifecycle functions
-  const reducers = patchReducers(address, component, stateCallers.callReducer)
+  const reducers = patchReducersWithState(address, component, stateCallers.callReducer)
   const signals = patchSignals(address, component, stateCallers.callSignal)
   const methods = patchMethods(address, component, stateCallers.callMethod,
                                reducers, signals)
@@ -903,7 +903,7 @@ export function reduceChildren (node, fn, init, address = []) {
 function runSignalSetup (component, address, stateCallers) {
   const signalsAPI = makeSignalsAPI(component.signalNames, false)
   const childSignalsAPI = makeChildSignalsAPI(component.model)
-  const reducers = patchReducers(address, component, stateCallers.callReducer)
+  const reducers = patchReducersWithState(address, component, stateCallers.callReducer)
   const signals = patchSignals(address, component, stateCallers.callSignal)
   const methods = patchMethods(address, component, stateCallers.callMethod,
                                reducers, signals)
@@ -1076,13 +1076,27 @@ function checkInputs (options, defaults) {
   })
 }
 
+function patchReducersNoArg (reducers) {
+  return mapValues(reducers, (reducer, name) => {
+    return (...args) => {
+      if (args.length === 0) {
+        return reducer({})
+      } else if (args.length > 1 || !isObject(args[0])) {
+        throw new Error('Reducers can only take 1 or 0 arguments, and the ' +
+                        'argument should be an object.')
+      } else {
+        return reducer(args[0])
+      }
+    }
+  })
+}
+
 /**
  * Create a tinier component.
  * @param {Object} componentArgs - Functions defining the Tinier component.
  * @param {str} componentArgs.displayName - A name for the component.
  * @param {[str]} componentArgs.signals - An array of signal names.
  * @param {Object} componentArgs.model - The model object.
- * @param {Function} componentArgs.init - A function to initialize the state.
  * @param {Object} componentArgs.reducers -
  * @param {Object} componentArgs.methods -
  * @param {Function} componentArgs.willMount -
@@ -1105,7 +1119,6 @@ export function createComponent (options = {}) {
     signalNames:  [],
     signalSetup:  noop,
     model:        {},
-    init:         constant({}),
     reducers:     {},
     methods:      {},
     willMount:    noop,
@@ -1119,6 +1132,11 @@ export function createComponent (options = {}) {
   // check inputs
   checkInputs(options, defaults)
 
+  if ('reducers' in options) {
+    options.reducersRaw = options.reducers
+    options.reducers = patchReducersNoArg(options.reducers)
+  }
+
   // check model
   if (options.model && checkType(COMPONENT, options.model)) {
     throw new Error('The model cannot be another Component. The top level of ' +
@@ -1128,10 +1146,17 @@ export function createComponent (options = {}) {
   return tagType(COMPONENT, { ...defaults, ...options })
 }
 
-function patchReducers (address, component, callReducer) {
-  return mapValues(component.reducers, (reducer, name) => {
-    return function (arg) {
-      callReducer(address, component, reducer, arg, name)
+function patchReducersWithState (address, component, callReducer) {
+  return mapValues(component.reducersRaw, (reducer, name) => {
+    return function (...args) {
+      if (args.length === 0) {
+        callReducer(address, component, reducer, {}, name)
+      } else if (args.length > 1 || !isObject(args[0])) {
+        throw new Error('Reducers can only take 1 or 0 arguments, and the ' +
+                        'argument should be an object.')
+      } else {
+        callReducer(address, component, reducer, args[0], name)
+      }
     }
   })
 }
@@ -1235,6 +1260,11 @@ export function makeCallReducer (topComponent, stateTree, bindingTree,
       console.log(newLocalState)
     }
 
+    // A component state cannot be null
+    if (newLocalState === null) {
+      throw new Error('A component state cannot be null.')
+    }
+
     // Check that the new state is valid. If not, throw an Error, and the new
     // state will be thrown out.
     checkState(triggeringComponent.model, newLocalState)
@@ -1302,7 +1332,7 @@ export function makeStateCallers (component, stateTree, bindingTree,
  *                                     will be called to initialize the state.
  * @return {Object} The API functions, incuding getState, signals, and methods.
  */
-export function run (component, appEl, opts = {}) {
+export function run (component, appEl, initialState = {}, opts = {}) {
   // Create variables that will store the state for the whole lifetime of the
   // application. Similar to the redux model.
   let stateTree = makeTree(null, false)
@@ -1315,30 +1345,23 @@ export function run (component, appEl, opts = {}) {
                                         signalTree, opts)
 
   // first draw
-  const initReducer = () => {
-    return 'initialState' in opts ?
-      opts.initialState : component.reducers.init()
+  const setStateReducer = ({ newState }) => newState
+  const setState = newState => {
+    return stateCallers.callReducer([], component, setStateReducer,
+                                    { newState }, 'setState')
   }
-  stateCallers.callReducer([], component, initReducer, {}, 'initialState')
+  setState(initialState)
 
   // return API
-  const reducers = patchReducers([], component, stateCallers.callReducer)
+  const getState = () => stateTree.get([])
+  const reducers = patchReducersWithState([], component,
+                                          stateCallers.callReducer)
   const signalsCall = patchSignals([], component, stateCallers.callSignal)
   const methods = patchMethods([], component, stateCallers.callMethod, reducers,
                                signalsCall)
+  const signals = signalTree.get([]).data.signals
 
-  const setStateReducer = ({ state, newState }) => newState
-  return {
-    getState: () => stateTree.get([]),
-    setState: newState => {
-      return stateCallers.callReducer([], component, setStateReducer,
-                                      { newState }, 'setState')
-    },
-    signals: signalTree.get([]).data.signals,
-    // TODO
-    // reducers:
-    // methods:
-  }
+  return { setState, getState, reducers, methods, signals }
 }
 
 // -------------------------------------------------------------------
