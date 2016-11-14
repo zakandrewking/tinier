@@ -419,6 +419,7 @@ function dropNodes (tree) {
     [NODE]: node => node.data,
     [OBJECT]: obj => mapValues(obj, dropNodes),
     [ARRAY]: ar => ar.map(dropNodes),
+    [NULL]: () => null,
   })
 }
 
@@ -566,9 +567,12 @@ export function makeTree (init, mutable) {
  * @param {Object} newState - The new state corresponding to modelNode.
  */
 export function checkState (modelNode, newState) {
+  if (newState === null) {
+    return
+  }
   match(modelNode, {
     [OBJECT_OF]: objOf => {
-      if ((!isObject(newState) || isArray(newState)) && newState !== null) {
+      if (!isObject(newState) || isArray(newState)) {
         throw new Error('Shape of the new state does not match the model. ' +
                         'Model: ' + objOf + '  State: ' + newState)
       } else {
@@ -576,7 +580,7 @@ export function checkState (modelNode, newState) {
       }
     },
     [ARRAY_OF]: arOf => {
-      if (!isArray(newState) && newState !== null) {
+      if (!isArray(newState)) {
         throw new Error('Shape of the new state does not match the model.' +
                         'Model: ' + arOf + '  State: ' + newState)
       } else {
@@ -587,7 +591,7 @@ export function checkState (modelNode, newState) {
       checkState(modelNode.model, newState)
     },
     [ARRAY]: ar => {
-      if (!isArray(newState) && newState !== null) {
+      if (!isArray(newState)) {
         throw new Error('Shape of the new state does not match the model.' +
                         'Model: ' + ar + '  State: ' + newState)
       } else {
@@ -595,7 +599,7 @@ export function checkState (modelNode, newState) {
       }
     },
     [OBJECT]: obj => {
-      if ((!isObject(newState) || isArray(newState)) && newState !== null) {
+      if (!isObject(newState) || isArray(newState)) {
         throw new Error('Shape of the new state does not match the model. ' +
                         'Model: ' + obj + '  State: ' + newState)
       } else {
@@ -1015,9 +1019,9 @@ export function mergeSignals (node, address, diffNode, signalNode, stateCallers,
       const newUpChild = hasCreated ? s.data.childSignalsAPI : null
       const newUpAddress = hasCreated ? [] : null
       const children = mergeSignals(component.model, newAddress, d.children,
-                                    s.children, stateCallers,
+                                    get(s, 'children'), stateCallers,
                                     newUpChild, newUpAddress)
-      return tagType(NODE, { data: s.data, children })
+      return tagType(NODE, { data: get(s, 'data'), children })
     }
   }
 
@@ -1076,14 +1080,28 @@ function checkInputs (options, defaults) {
   })
 }
 
-function patchReducersNoArg (reducers) {
+function patchInitNoArg (init) {
+  return (...args) => {
+    if (args.length === 0) {
+      return init({})
+    } else if (args.length > 1 || !isObject(args[0])) {
+      throw new Error('Reducers can only take 1 or 0 arguments, and the ' +
+                      'argument should be an object.')
+    } else {
+      return init(args[0])
+    }
+  }
+}
+
+function patchReducersOneArg (reducers) {
   return mapValues(reducers, (reducer, name) => {
     return (...args) => {
-      if (args.length === 0) {
-        return reducer({})
-      } else if (args.length > 1 || !isObject(args[0])) {
-        throw new Error('Reducers can only take 1 or 0 arguments, and the ' +
+      if (args.length !== 1 || !isObject(args[0])) {
+        throw new Error('Reducers can only take 1 arguments, and the ' +
                         'argument should be an object.')
+      } else if (!('state' in args[0])) {
+        throw new Error('The argument to the reducer must have a "state" ' +
+                        'attribute.')
       } else {
         return reducer(args[0])
       }
@@ -1097,6 +1115,7 @@ function patchReducersNoArg (reducers) {
  * @param {str} componentArgs.displayName - A name for the component.
  * @param {[str]} componentArgs.signals - An array of signal names.
  * @param {Object} componentArgs.model - The model object.
+ * @param {Function} componentArgs.init - A function to initialize the state.
  * @param {Object} componentArgs.reducers -
  * @param {Object} componentArgs.methods -
  * @param {Function} componentArgs.willMount -
@@ -1119,6 +1138,7 @@ export function createComponent (options = {}) {
     signalNames:  [],
     signalSetup:  noop,
     model:        {},
+    init:         constant({}),
     reducers:     {},
     methods:      {},
     willMount:    noop,
@@ -1132,9 +1152,13 @@ export function createComponent (options = {}) {
   // check inputs
   checkInputs(options, defaults)
 
+  if ('init' in options) {
+    options.init = patchInitNoArg(options.init)
+  }
+
   if ('reducers' in options) {
     options.reducersRaw = options.reducers
-    options.reducers = patchReducersNoArg(options.reducers)
+    options.reducers = patchReducersOneArg(options.reducers)
   }
 
   // check model
@@ -1260,11 +1284,6 @@ export function makeCallReducer (topComponent, stateTree, bindingTree,
       console.log(newLocalState)
     }
 
-    // A component state cannot be null
-    if (newLocalState === null) {
-      throw new Error('A component state cannot be null.')
-    }
-
     // Check that the new state is valid. If not, throw an Error, and the new
     // state will be thrown out.
     checkState(triggeringComponent.model, newLocalState)
@@ -1332,7 +1351,7 @@ export function makeStateCallers (component, stateTree, bindingTree,
  *                                     will be called to initialize the state.
  * @return {Object} The API functions, incuding getState, signals, and methods.
  */
-export function run (component, appEl, initialState = {}, opts = {}) {
+export function run (component, appEl, opts = {}) {
   // Create variables that will store the state for the whole lifetime of the
   // application. Similar to the redux model.
   let stateTree = makeTree(null, false)
@@ -1344,6 +1363,13 @@ export function run (component, appEl, initialState = {}, opts = {}) {
   const stateCallers = makeStateCallers(component, stateTree, bindingTree,
                                         signalTree, opts)
 
+  // make sure initial state is valid
+  // TODO LEFT OFF ... does this work?
+  // Q: Does the state for a child component need to be defined? Are we checking
+  // all the way down the line?
+  const initialState = ('initialState' in opts ? opts.initialState :
+                        component.init())
+
   // first draw
   const setStateReducer = ({ newState }) => newState
   const setState = newState => {
@@ -1354,14 +1380,17 @@ export function run (component, appEl, initialState = {}, opts = {}) {
 
   // return API
   const getState = () => stateTree.get([])
+  // TODO check state
+  const setStateNoRender = newState => stateTree.set([], newState)
   const reducers = patchReducersWithState([], component,
                                           stateCallers.callReducer)
   const signalsCall = patchSignals([], component, stateCallers.callSignal)
   const methods = patchMethods([], component, stateCallers.callMethod, reducers,
                                signalsCall)
-  const signals = signalTree.get([]).data.signals
+  // if state is null, then data will be null
+  const signals = get(signalTree.get([]).data, 'signals')
 
-  return { setState, getState, reducers, methods, signals }
+  return { setState, setStateNoRender, getState, reducers, methods, signals }
 }
 
 // -------------------------------------------------------------------

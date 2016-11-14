@@ -468,41 +468,69 @@ describe('makeTree', () => {
 
 describe('checkState', () => {
   it('does nothing for a valid state object', () => {
-    const model = { a: arrayOf(DefComponent) }
-    const state = { a: [ { x: 10 } ] }
+    const Parent = createComponent({
+      model: { child: DefComponent },
+    })
+    const model = { a: arrayOf(Parent) }
+    const state = { a: [ { child: { x: 10 } } ] }
     checkState(model, state)
   })
 
   it('checks for invalid state shape -- object', () => {
+    const Parent = createComponent({
+      model: { child: DefComponent },
+    })
+    const model = { a: arrayOf(Parent) }
+    const state = { a: [ { child: [ 10 ] } ] }
     assert.throws(() => {
-      const model = { a: arrayOf(DefComponent) }
-      const state = [ { b: [ { x: 10 } ] } ]
       checkState(model, state)
     }, /Shape of the new state does not match the model/)
   })
 
   it('checks for invalid state shape -- array', () => {
+    const model = [ DefComponent ]
+    const state = { b: [ { x: 10 } ] }
     assert.throws(() => {
-      const model = [ DefComponent ]
-      const state = { b: [ { x: 10 } ] }
       checkState(model, state)
     }, /Shape of the new state does not match the model/)
   })
 
   it('checks for invalid state shape -- objectOf', () => {
+    const model = { a: objectOf(DefComponent) }
+    const state = { a: [ { x: 10 } ] }
     assert.throws(() => {
-      const model = { a: objectOf(DefComponent) }
-      const state = { a: [ { x: 10 } ] }
       checkState(model, state)
     }, /Shape of the new state does not match the model/)
   })
 
   it('checks for invalid state shape -- arrayOf', () => {
+    const model = { a: arrayOf(DefComponent) }
+    const state = { a: { b: { x: 10 } } }
     assert.throws(() => {
-      const model = { a: arrayOf(DefComponent) }
-      const state = { a: { b: { x: 10 } } }
       checkState(model, state)
     }, /Shape of the new state does not match the model/)
+  })
+
+  it('allows null -- component', () => {
+    const model = { a: DefComponent }
+    const state = { a: null }
+    checkState(model, state)
+  })
+
+  it('allows null -- objectOf', () => {
+    const model = { a: objectOf(DefComponent) }
+    const state1 = { a: null }
+    checkState(model, state1)
+    const state2 = { a: { b: null, c: { x: 10 } } }
+    checkState(model, state2)
+  })
+
+  it('allows null -- arrayOf', () => {
+    const model = { a: arrayOf(DefComponent) }
+    const state1 = { a: null }
+    checkState(model, state1)
+    const state2 = { a: [ null, { x: 10 } ] }
+    checkState(model, state2)
   })
 })
 
@@ -953,28 +981,69 @@ describe('mergeSignals', () => {
                        .child.setParent._callFns.length, 1)
     assert.strictEqual(signals3.children.child.length, 1)
   })
+
+  it('works with null state', () => {
+    const Component = createComponent({ model: { child: DefComponent } })
+    const stateTree = makeTree({ child: null }, false)
+    const bindingTree = makeTree(null, true)
+    const signalTree = makeTree(null, true)
+    const stateCallers = makeStateCallers(Component, stateTree, bindingTree,
+                                          signalTree)
+    const dOut = diffWithModelMin(Component, stateTree.get([]), null, [], [])
+    const signals = mergeSignals(Component, [], dOut.minSignals.diff,
+                                 signalTree.get([]), stateCallers)
+    assert.isNull(signals.children.child.data)
+    assert.deepEqual(signals.children.child.children, {})
+  })
 })
 
-describe('createComponent', () => {
+describe('createComponent/run', () => {
   it('errors if the model is a single component', () => {
     assert.throws(() => {
       createComponent({ model: DefComponent })
     }, /cannot be another Component/)
   })
 
-  it('does not allow null for state', () => {
+  it('allows null for state; does not render', () => {
     const Component = createComponent({
-      reducers: {
-        a: () => null
-      }
+      init: () => null,
+      reducers: { a: () => null },
+      render: () => { throw new Error('Should not update') },
     })
     const { reducers } = run(Component, EL1)
-    assert.throws(() => {
-      reducers.a()
-    }, /A component state cannot be null/)
+    reducers.a()
   })
 
-  it('makes sure reducers accept 1 or 0 arguments', () => {
+  it('has setStateNoRender method', () => {
+    let ready = false
+    const Component = createComponent({
+      render: () => {
+        if (ready) {
+          throw new Error('Should not render')
+        }
+      }
+    })
+    const { setState, setStateNoRender, getState } = run(Component, EL1)
+    ready = true
+    const newState = { a: 'new state' }
+    setStateNoRender(newState)
+    assert.deepEqual(getState(), newState)
+    assert.throws(() => {
+      setState({ b: 'another new state' })
+    })
+  })
+
+  it('init accepts 1 or 0 arguments', () => {
+    const Component = createComponent({
+      init: ({ a = 1 }) => ({ a }),
+    })
+    assert.deepEqual(Component.init({ a: 2 }), { a: 2 })
+    assert.deepEqual(Component.init(), { a: 1 })
+    assert.throws(() => Component.init('a'))
+    assert.throws(() => Component.init({ a: 2 }, 'b'))
+  }),
+
+  it('reducers accept 1 or 0 arguments', () => {
     const C1 = createComponent({
       reducers: {
         a: () => { return {} }
@@ -992,9 +1061,10 @@ describe('createComponent', () => {
         },
       },
     })
-    C1.reducers.a()
-    C1.reducers.a({})
-    assert.throws(() => C1.reducers.a({}, 2))
+    C1.reducers.a({ state: {} })
+    assert.throws(() => C1.reducers.a())
+    assert.throws(() => C1.reducers.a({}))
+    assert.throws(() => C1.reducers.a({ state: {} }, 2))
     assert.throws(() => C1.reducers.a('not an object'))
     // with the run API
     const { methods, reducers } = run(C1, EL1)
@@ -1007,17 +1077,17 @@ describe('createComponent', () => {
     assert.throws(() => methods.bad1())
     assert.throws(() => methods.bad2({}))
   })
-})
 
-describe('run', () => {
   it('respects binding object for create and render', () => {
     const Child = createComponent({
       displayName: 'Child',
-      init: () => ({ val: 1 }),
       signalNames: [ 'add' ],
       signalSetup: ({ signals, reducers }) => signals.add.on(reducers.add),
       reducers: {
-        add: ({ state, v }) => ({ ...state, val: v })
+        init: () => ({ val: 1 }),
+        add: ({ state, v }) => {
+          return { ...state, val: v }
+        },
       },
 
       render: ({ state, methods, el }) => {
