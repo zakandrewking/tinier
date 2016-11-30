@@ -13,8 +13,8 @@ Tinier is Alpha software. It runs, but expect bugs and some changes to the API.
 
 Tinier is available as a UMD module on unpkg:
 
-- http://unpkg.com/tinier/dist/tinier.js
-- http://unpkg.com/tinier/dist/tinier.min.js
+- http://unpkg.com/tinier/lib/tinier.js
+- http://unpkg.com/tinier/lib/tinier.min.js
 
 And it is on NPM:
 
