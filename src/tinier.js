@@ -369,7 +369,7 @@ export function updateEl (address, component, state, diffVal, lastRenderedEl, el
   const arg = { state, methods, reducers, signals, el, lastRenderedEl }
 
   // warn if the el is null
-  if (el === null && !diffVal === DESTROY && component.render !== noop) {
+  if (el === null && !(diffVal === DESTROY) && component.render !== noop) {
     throw new Error('No binding provided for component ' + component.displayName
                     + ' at [' + address.join(', ') + '].')
   }
@@ -1579,7 +1579,9 @@ export function createDOMElement (tinierEl, parent) {
   const { name, explicit } = explicitNamespace(tag)
   const ns = (explicit !== null ? explicit :
               (tag in NAMESPACES ? NAMESPACES[tag] : parent.namespaceURI))
-  const el = document.createElementNS(ns, name)
+  const el = (ns === NAMESPACES.xhtml ?
+              document.createElement(name) :
+              document.createElementNS(ns, name))
   return updateDOMElement(el, tinierEl)
 }
 
@@ -1606,10 +1608,12 @@ function stripOn (name) {
 }
 
 function setAttributeCheckBool (namespace, el, name, val) {
-  if (val === true) {
-    el.setAttributeNS(namespace, name, name)
-  } else if (val !== false) {
-    el.setAttributeNS(namespace, name, val)
+  // set boolean appropriately
+  const valToSet = val === true ? name : val
+  if (namespace === NAMESPACES.xhtml) {
+    el.setAttribute(name, valToSet)
+  } else {
+    el.setAttributeNS(namespace, name, valToSet)
   }
 }
 

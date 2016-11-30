@@ -84,6 +84,23 @@ function shouldUpdate ({ state, lastState }) {
 }
 ```
 
+## Arguments vs. Properties
+
+Tinier generally follows the approach
+[taken by React](https://facebook.github.io/react/docs/dom-elements.html) for
+dealing with attributes and properties. All properties of a tag in JSX (or
+tinier.createElement) are set as attributes with the exception of the following
+that have special behavior [Currently no special treatment for properties].
+
+Tinier will convert boolean values to the correct string values required by
+attributes. For example, the checked attribute can be set with:
+
+```
+<input checked=true>
+```
+
+- [MDN reference](https://developer.mozilla.org/en-US/docs/Web/HTML/Attributes)
+
 ## API
 
 ### tinier.createComponent({ ...args })
@@ -96,38 +113,3 @@ Arguments as `args` object:
 - *init*: (Object) => Object, Default
 - *signalNames*: `[String]`, default `[]` - A list of signal names as strings.
 - *interface*: `tinier.Interface | null`, default `null` - A Tinier Interface.
-
-### tinier.createInterface({ ...args })
-
-Arguments as `args` object:
-
-- *state*: An object that defines the required state for the model. It can
-  contain nested object and array, and interface types defined below.
-
-- *signals*: An object with keys for signal names and values define the type
-  passed to a signal. For instance, to require a signal named `changeState` that
-  can be passed a Boolean, you would create the following interface:
-
-```
-import { createInterface, interfaceTypes } from 'tinier'
-
-const Interface = createInterface({
-  signalTypes: { changeState: interfaceTypes.boolean }
-})
-
-An interface is used by passing it to the `interface` argument of
-`createComponent`.
-
-### tinier.interfaceTypes
-
-- tinier.interfaceTypes.string
-- tinier.interfaceTypes.stringWithDefault
-- tinier.interfaceTypes.number
-- tinier.interfaceTypes.numberWithDefault
-- tinier.interfaceTypes.boolean
-- tinier.interfaceTypes.booleanWithDefault
-- tinier.interfaceTypes.arrayOf
-- tinier.interfaceTypes.arrayOfWithDefault
-- tinier.interfaceTypes.objectOf
-- tinier.interfaceTypes.objectOfWithDefault
-- tinier.interfaceTypes.noArgument
