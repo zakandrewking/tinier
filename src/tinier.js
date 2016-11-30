@@ -402,8 +402,11 @@ export function updateEl (address, component, state, diffVal, lastRenderedEl, el
     }
 
     // These need to be asynchronous.
-    if      (diffVal === CREATE) defer(() => component.didMount(arg))
-    else if (shouldUpdate)     defer(() => component.didUpdate(arg))
+    if (diffVal === CREATE) {
+      defer(() => component.didMount(arg))
+    } else if (shouldUpdate) {
+      defer(() => component.didUpdate(arg))
+    }
 
     // If the component rendered, then change lastEl.
     return { bindings, lastRenderedEl: shouldUpdate ? el : lastRenderedEl }
@@ -1708,7 +1711,7 @@ export function updateDOMElement (el, tinierEl) {
 
   // call the callback
   if (thenFn) {
-    thenFn(el)
+    defer(() => thenFn(el))
   }
 
   return el

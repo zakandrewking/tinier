@@ -90,13 +90,32 @@ Tinier generally follows the approach
 [taken by React](https://facebook.github.io/react/docs/dom-elements.html) for
 dealing with attributes and properties. All properties of a tag in JSX (or
 tinier.createElement) are set as attributes with the exception of the following
-that have special behavior [Currently no special treatment for properties].
+that have special behavior.
+
+### Boolean attributes
 
 Tinier will convert boolean values to the correct string values required by
 attributes. For example, the checked attribute can be set with:
 
 ```
-<input checked=true>
+<input checked=true />
+```
+
+### Autofocus
+
+Instead of autofocus, make a callback with `didMount`:
+
+```javascript
+didMount: ({ el }) => {
+  el.getElementsByClassName('new-todo')[0].focus()
+},
+```
+
+Or use the special `then` attribute like this if you want it to run every time
+the component renders:
+
+```javascript
+<input then={ el => el.focus() } />
 ```
 
 - [MDN reference](https://developer.mozilla.org/en-US/docs/Web/HTML/Attributes)
