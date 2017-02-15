@@ -1526,7 +1526,23 @@ export function objectForBindings (bindings) {
 // Make sure default is null so undefined type constant do not match
 const isTinierBinding = obj => checkType(BINDING, obj)
 const isTinierElement = obj => checkType(ELEMENT, obj)
-const isElement = v => v instanceof Element
+
+/**
+ * Returns true if it is a DOM element.
+ * http://stackoverflow.com/questions/384286/javascript-isdom-how-do-you-check-if-a-javascript-object-is-a-dom-object
+ */
+function isElement (o) {
+  return (o && typeof o === 'object' && o !== null &&
+          o.nodeType === 1 && typeof o.nodeName === 'string')
+}
+
+/**
+ * Returns true if it is a DOM text element.
+ */
+function isText (o) {
+  return (o && typeof o === 'object' && o !== null &&
+          o.nodeType === 3 && typeof o.nodeName === 'string')
+}
 
 /**
  * Create a new TinierDOM element.
@@ -1814,7 +1830,7 @@ export function render (container, ...tinierElementsAr) {
       const el = container.childNodes[i]
       const s = String(tinierEl)
       // This should be a text node.
-      if (el instanceof Text) {
+      if (isText(el)) {
         // If already a text node, then set the text content.
         el.textContent = s
       } else if (el) {
