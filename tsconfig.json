@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "jsx": "react",
+    "jsxFactory": "tinier.createElement",
+    "sourceMap": true,
+    "target": "es5",
+    "locale": "en-US",
+    "module": "umd",
+    "declaration": true,
+    "outDir": "./lib",
+    "strictNullChecks": true
+  },
+  "files": [
+    "src/tinier.ts"
+  ]
+}
+

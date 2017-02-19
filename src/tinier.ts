@@ -18,10 +18,23 @@ export const CREATE      = '@TINIER_CREATE'
 export const UPDATE      = '@TINIER_UPDATE'
 export const DESTROY     = '@TINIER_DESTROY'
 
+interface ArrayOf {
+  type: '@TINIER_OBJECT_OF';
+}
+
+interface ObjectOf {
+  type: '@TINIER_OBJECT_OF';
+}
+
+interface Component {
+  type: '@TINIER_COMPONENT';
+}
+
+
 // basic functions
 function noop () {}
 
-function constant (val) {
+function constant<T> (val: T): { (): T } {
   return () => val
 }
 
@@ -33,15 +46,15 @@ function last (array) {
   return array[array.length - 1]
 }
 
-export function tail (array) {
+export function tail <T> (array: T[]) : [ T[], T ] {
   return [ array.slice(0, -1), last(array) ]
 }
 
-export function head (array) {
+export function head <T> (array: T[]) : [ T, T[] ] {
   return [ array[0], array.slice(1) ]
 }
 
-export function fromPairs (pairs) {
+export function fromPairs <T> (pairs: [ string, T ][]): { [key: string]: T } {
   return pairs.reduce((accum, [ key, val ]) => {
     return { ...accum, [key]: val }
   }, {})
@@ -54,7 +67,11 @@ export function fromPairs (pairs) {
  * @param {String} property - An property of the object.
  * @return {*} The value of the property or, if not present, the default value.
  */
-export function get (object, property) {
+export function get<T> (
+  object: { [key: string]: T } | null,
+  property: string
+): T | null
+{
   return (object &&
           typeof object !== 'string' &&
           object.hasOwnProperty(property)) ? object[property] : null
@@ -131,9 +148,9 @@ export function reduceValues (obj, fn, init) {
   return accum
 }
 
-export function zipArrays (arrays) {
+export function zipArrays<T> (arrays: T[][]): T[][] {
   const lenLongest = Math.max.apply(null, arrays.filter(x => x !== null).map(a => a.length))
-  const res = []
+  const res : any = []
   for (let i = 0; i < lenLongest; i++) {
     res.push(arrays.map(a => a !== null && i < a.length ? a[i] : null))
   }
@@ -252,7 +269,7 @@ export function match (object, fns, defaultFn = throwUnrecognizedType) {
   return defaultFn(object)
 }
 
-function throwUnrecognizedType (node) {
+export function throwUnrecognizedType (node) {
   throw new Error('Unrecognized type in pattern matching: ' + node)
 }
 
@@ -482,7 +499,18 @@ function updateComponents (address, node, state, diff, bindings, renderResult,
 // State
 // -------------------------------------------------------------------
 
-export function addressWith (address, key) {
+export type Key = string | number;
+export type Address = Key[];
+export type TreeArray<T> = { [key: number]: Tree<T> };
+export type TreeObject<T> = { [key: string]: Tree<T> };
+export type TreeNode<T> = {
+  type: "@TINIER_NODE",
+  value: T;
+  children: Tree<T> | null;
+}
+export type Tree<T> = TreeObject<T> | TreeArray<T> | TreeNode<T>;
+
+export function addressWith (address: Address, key: Key | null) : Address {
   if (key === null) {
     return address
   } else {
@@ -492,20 +520,44 @@ export function addressWith (address, key) {
   }
 }
 
-export function addressEqual (a1, a2) {
+export function addressEqual (a1: Address, a2: Address): boolean {
   if (a1 === null || a2 === null || a1.length !== a2.length) return false
   return a1.reduce((accum, v, i) => accum && v === a2[i], true)
 }
 
+function isNode<T> (val: Tree<T>): val is TreeNode<T> {
+  return checkType(NODE, val)
+}
+
+function isTreeArray<T> (val: Tree<T>): val is TreeArray<T> {
+  return checkType(Array, val)
+}
+
+function isTreeObject<T> (val: Tree<T>): val is TreeObject<T> {
+  return checkType(Object, val)
+}
+
+function getFromNode<T> (node: Tree<T> | null, k: Key): Tree<T> | null {
+  if (node === null) {
+    return null
+  } else if (isTreeArray(node) || isTreeObject(node)) {
+    return node[k]
+  } else if (isNode(node)) {
+    return node
+  }
+  // Just for typescript
+  return null
+}
+
 /**
  * Get the value in a tree.
- * @param {Array} address -
- * @param {Object} tree -
- * @return {*} - The value at the given address.
+ * @param address -
+ * @param tree -
+ * @return The value at the given address.
  */
-function treeGet (address, tree) {
-  return address.reduce((accum, val) => {
-    return checkType(NODE, accum) ? accum.children[val] : accum[val]
+function treeGet<T> (address: Address, tree: Tree<T>): Tree<T> | null {
+  return address.reduce((accum, k) => {
+    return isNode(accum) ? getFromNode(accum.children, k) : accum[k]
   }, tree)
 }
 
@@ -516,7 +568,7 @@ function treeGet (address, tree) {
  * @param {*} value - The new value to set at address.
  * @return (*) The new tree.
  */
-function treeSet (address, tree, value) {
+function treeSet (address: Address, tree, value) {
   if (address.length === 0) {
     return value
   } else {
@@ -535,13 +587,13 @@ function treeSet (address, tree, value) {
  * @param {*} value - The new value to set at address.
  * @return (*) The tree.
  */
-function treeSetMutable (address, tree, value) {
+function treeSetMutable<T> (address: Address, tree, value: T): T | Tree {
   if (address.length === 0) {
     return value
   } else {
     const [ rest, last ] = tail(address)
     const parent = treeGet(rest, tree)
-    if (checkType(NODE, parent)) {
+    if (isNode(parent)) {
       parent.children[last] = value
     } else {
       parent[last] = value
@@ -646,8 +698,9 @@ function diffWithModel (modelNode, state, lastState, address,
         const isValidFn = (obj, k) => {
           return isObject(obj) && k in obj && obj[k] !== null
         }
-        const l = Object.assign({}, state || {}, lastState || {})
-        return mapValues(l, function (_, k) {
+        const keysIf = v => v ? Object.keys(v) : []
+        const keys = [ ...keysIf(state), ...keysIf(lastState) ]
+        return keys.map(k => {
           const data = computeDiffValue(state, lastState, k, isValidFn,
                                         objOf.component.shouldUpdate,
                                         addressWith(address, k),
@@ -798,20 +851,52 @@ export function diffWithModelMin (modelNode, state, lastState, address,
 // Signals
 // -------------------------------------------------------------------
 
+export interface OnFn {
+  (...args): void;
+}
+
+export interface Signal {
+  _onFns: OnFn[];
+  on: { (OnFn): void };
+  call: { (...args): void };
+}
+
+export interface OnFnInd {
+  (number): OnFn;
+}
+
+export interface CallFn {
+  fn: { (...args): void; };
+}
+
+export interface SignalAPIOn {
+  _callFns: CallFn[];
+  call: { (...args): void };
+  _onFns: OnFnInd[];
+  on: { (OnFnInd): void };
+}
+
+export interface SignalAPIOnEach {
+  _callFns: CallFn[];
+  call: { (...args): void };
+  _onFns: OnFnInd[];
+  onEach: { (OnFnInd): void };
+}
+
 /**
  * Make a signal.
  * @return {Object} A signal with attributes `on` and `call`.
  */
-export function makeSignal () {
-  const res = { _onFns: [] }
-  res.on = fn => {
+export function makeSignal () : Signal {
+  let _onFns : OnFn[] = []
+  const on = fn => {
     if (!isFunction(fn)) {
       throw new Error('First argument to "on" must be a function')
     }
-    res._onFns = [ ...res._onFns, fn ]
+    _onFns.push(fn)
   }
-  res.call = (...args) => res._onFns.map(fn => fn(...args))
-  return res
+  const call = (...args) => _onFns.map(fn => fn(...args))
+  return { _onFns, on, call }
 }
 
 /**
@@ -819,35 +904,36 @@ export function makeSignal () {
  * @param {Boolean} isCollection -
  * @return {Object}
  */
-export function makeOneSignalAPI (isCollection) {
-  // make a `_callFn` function that will be replaced later and is the target of
-  // `call`
-  const res = { _callFns: [] }
-  // call will run all functions in `_callFns`
-  res.call = (...args) => {
+export function makeOneSignalAPI (isCollection: boolean) : SignalAPIOn | SignalAPIOnEach {
+  // Make a "_callFn" function that will be replaced later and is the target of
+  // "call". Call will run all functions in "_callFns".
+  const _callFns : CallFn[] = []
+  const _onFns : OnFnInd[] = []
+  const call = (...args) => {
     if (args.length > 1 || !isObject(args[0])) {
       throw new Error('Call only accepts a single object as argument.')
     }
-    res._callFns.map(({ fn }) => fn(args[0]))
+    _callFns.map(({ fn }) => fn(args[0]))
   }
   // store callbacks passed with `on` or `onEach`
-  res._onFns = []
-  const onName = isCollection ? 'onEach' : 'on'
-  res[onName] = fn => {
+  const on = fn => {
     if (!isFunction(fn)) {
-      throw new Error('Argument to "' + onName + '" must be a function')
+      throw new Error('Argument to "' + (isCollection ? 'onEach' : 'on') +
+                      '" must be a function')
     }
-    res._onFns.push(index => (...args) => {
+    _onFns.push(index => (...args) => {
       if (args.length > 1 || !isObject(args[0])) {
         throw new Error('On function only accepts a single object as argument.')
       }
-      const argObject = ( typeof index === 'string' ? { k: index, ...args[0] } :
-                          (typeof index === 'number' ? { i: index, ...args[0] } :
-                           args[0]))
+      const argObject = (typeof index === 'string' ? { k: index, ...args[0] } :
+                         (typeof index === 'number' ? { i: index, ...args[0] } :
+                          args[0]))
       fn(argObject)
     })
   }
-  return res
+  return (isCollection ?
+          { _callFns, _onFns, call, onEach: on } as SignalAPIOnEach :
+          { _callFns, _onFns, call, on } as SignalAPIOn)
 }
 
 /**
