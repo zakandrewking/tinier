@@ -1,12 +1,14 @@
 /** @module tinier */
 
 // constants
+export type         NodeType = 'Tinier Node'
+export const NODE : NodeType = 'Tinier Node'
+
 export const ARRAY_OF    = '@TINIER_ARRAY_OF'
 export const OBJECT_OF   = '@TINIER_OBJECT_OF'
 export const COMPONENT   = '@TINIER_COMPONENT'
 export const ARRAY       = '@TINIER_ARRAY'
 export const OBJECT      = '@TINIER_OBJECT'
-export const NODE        = '@TINIER_NODE'
 export const NULL        = '@TINIER_NULL'
 export const STRING      = '@TINIER_STRING'
 export const NUMBER      = '@TINIER_NUMBER'
@@ -19,7 +21,7 @@ export const UPDATE      = '@TINIER_UPDATE'
 export const DESTROY     = '@TINIER_DESTROY'
 
 interface ArrayOf {
-  type: '@TINIER_OBJECT_OF';
+  type: '@TINIER_ARRAY_OF';
 }
 
 interface ObjectOf {
@@ -30,6 +32,19 @@ interface Component {
   type: '@TINIER_COMPONENT';
 }
 
+export type Key = string | number;
+
+export interface CollectionObj<T> { readonly [key: string]: T }
+export interface CollectionAr<T> extends ReadonlyArray<T> {}
+export type Collection<T> = CollectionAr<T> | CollectionObj<T>;
+
+function isCollectionObj<T> (c: Collection<T>): c is CollectionObj<T> {
+  return isObject(c)
+}
+
+function isCollectionAr<T> (c: Collection<T>): c is CollectionAr<T> {
+  return isArray(c)
+}
 
 // basic functions
 function noop () {}
@@ -46,35 +61,32 @@ function last (array) {
   return array[array.length - 1]
 }
 
-export function tail <T> (array: T[]) : [ T[], T ] {
+export function tail<T>(array: T[]) : [T[], T] {
   return [ array.slice(0, -1), last(array) ]
 }
 
-export function head <T> (array: T[]) : [ T, T[] ] {
+export function head<T>(array: ReadonlyArray<T>): [T, ReadonlyArray<T>] {
   return [ array[0], array.slice(1) ]
 }
 
-export function fromPairs <T> (pairs: [ string, T ][]): { [key: string]: T } {
+export function fromPairs<T>(pairs: [ string, T ][]): { [key: string]: T } {
   return pairs.reduce((accum, [ key, val ]) => {
     return { ...accum, [key]: val }
   }, {})
 }
 
 /**
- * Get the property of the object or index of the array, or return the default
- * value.
- * @param {Object|Array} object - An object or array.
- * @param {String} property - An property of the object.
- * @return {*} The value of the property or, if not present, the default value.
+ * Get the property of the object or index of the array, or return null.
  */
-export function get<T> (
-  object: { [key: string]: T } | null,
-  property: string
-): T | null
-{
-  return (object &&
-          typeof object !== 'string' &&
-          object.hasOwnProperty(property)) ? object[property] : null
+export function get<T>(c: Collection<T> | null, k: Key): T | null {
+  return c !== null ? c[k] : null
+}
+
+/**
+ * Get the property of the object or index of the array, or error.
+ */
+export function getStrict<T>(c: Collection<T>, k: Key): T {
+  return c[k]
 }
 
 export function isUndefined (object) {
@@ -100,11 +112,11 @@ export function isArray (object) {
   return Array.isArray(object)
 }
 
-export function isString (v) {
+export function isString(v): v is string {
   return typeof v === 'string'
 }
 
-export function isNumber (v) {
+export function isNumber(v): v is number {
   return typeof v === 'number'
 }
 
@@ -126,13 +138,9 @@ export function notNull (val) {
 }
 
 /**
- * Iterate over the keys and values of an object. Uses Object.keys to find
- * iterable keys.
- * @param {Object} obj - The input object.
- * @param {Function} fn - A function that takes the arguments (value, key).
- * @return {Object} A transformed object with values returned by the function.
+ * Iterate over the keys and values of an object.
  */
-export function mapValues (obj, fn) {
+export function mapValues<T>(obj: CollectionObj<T>, fn: (a: T, b: string) => T): CollectionObj<T> {
   const newObj = {}
   for (let key in obj) {
     newObj[key] = fn(obj[key], key)
@@ -140,7 +148,10 @@ export function mapValues (obj, fn) {
   return newObj
 }
 
-export function reduceValues (obj, fn, init) {
+/**
+ * Reduce over the keys and values of an object.
+ */
+export function reduceValues<T,U>(obj: CollectionObj<T>, fn: (accum: U, obj: T, key: string) => U, init: U): U {
   let accum = init
   for (let key in obj) {
     accum = fn(accum, obj[key], key)
@@ -499,16 +510,16 @@ function updateComponents (address, node, state, diff, bindings, renderResult,
 // State
 // -------------------------------------------------------------------
 
-export type Key = string | number;
-export type Address = Key[];
-export type TreeArray<T> = { [key: number]: Tree<T> };
-export type TreeObject<T> = { [key: string]: Tree<T> };
-export type TreeNode<T> = {
-  type: "@TINIER_NODE",
-  value: T;
-  children: Tree<T> | null;
+export type Address = ReadonlyArray<Key>;
+export type TreeNodeCollection<T> = Collection<TreeNode<T>>;
+
+export interface TreeNode<T> {
+  type: NodeType;
+  data: T | null;
+  // userData contains the other collection keys not included in children
+  userData: Collection<any> | null;
+  children: TreeNodeCollection<T> | null;
 }
-export type Tree<T> = TreeObject<T> | TreeArray<T> | TreeNode<T>;
 
 export function addressWith (address: Address, key: Key | null) : Address {
   if (key === null) {
@@ -520,65 +531,63 @@ export function addressWith (address: Address, key: Key | null) : Address {
   }
 }
 
-export function addressEqual (a1: Address, a2: Address): boolean {
+export function addressEqual (a1: Address | null, a2: Address | null): boolean {
   if (a1 === null || a2 === null || a1.length !== a2.length) return false
   return a1.reduce((accum, v, i) => accum && v === a2[i], true)
 }
 
-function isNode<T> (val: Tree<T>): val is TreeNode<T> {
-  return checkType(NODE, val)
-}
-
-function isTreeArray<T> (val: Tree<T>): val is TreeArray<T> {
-  return checkType(Array, val)
-}
-
-function isTreeObject<T> (val: Tree<T>): val is TreeObject<T> {
-  return checkType(Object, val)
-}
-
-function getFromNode<T> (node: Tree<T> | null, k: Key): Tree<T> | null {
-  if (node === null) {
-    return null
-  } else if (isTreeArray(node) || isTreeObject(node)) {
-    return node[k]
-  } else if (isNode(node)) {
-    return node
-  }
-  // Just for typescript
-  return null
+/**
+ * Get a node within a tree.
+ */
+function treeGet<T> (address: Address, treeNode: TreeNode<T> | null): TreeNode<T> | null {
+  return address.reduce((tn: TreeNode<T> | null, k: Key): TreeNode<T> | null => {
+    if (tn === null) {
+      return null
+    } else {
+      return get(tn.children, k)
+    }
+  }, treeNode)
 }
 
 /**
- * Get the value in a tree.
- * @param address -
- * @param tree -
- * @return The value at the given address.
+ * Get data from within a tree.
  */
-function treeGet<T> (address: Address, tree: Tree<T>): Tree<T> | null {
-  return address.reduce((accum, k) => {
-    return isNode(accum) ? getFromNode(accum.children, k) : accum[k]
-  }, tree)
+function treeGetData<T> (address: Address, tree: TreeNode<T>): T | null {
+  const node = treeGet(address, tree)
+  return node !== null ? node.data : null
 }
 
 /**
  * Set the value in a tree; immutable.
- * @param {Array} address -
- * @param {Object} tree -
- * @param {*} value - The new value to set at address.
- * @return (*) The new tree.
  */
-function treeSet (address: Address, tree, value) {
+function treeSet<T>(address: Address, tree: TreeNode<T> | null, value: TreeNode<T>): TreeNode<T> | null {
   if (address.length === 0) {
     return value
   } else {
     const [ k, rest ] = head(address)
-    return (typeof k === 'string' ?
-            { ...tree, [k]: treeSet(rest, treeGet([ k ], tree), value) } :
-            [ ...tree.slice(0, k), treeSet(rest, treeGet([ k ], tree), value),
-              ...tree.slice(k + 1) ])
+    const children = tree.children
+    if (children === null) {
+      return null
+    } else if (isCollectionAr(children)) {
+      if (isNumber(k)) {
+        const newVal =
+          return {
+            type:
+            [...children.slice(0, k),
+                treeSet(rest, treeGet([ k ], tree), value),
+                ...children.slice(k + 1)]
+      } else {
+        throw new Error('')
+      }
+    } else if (isCollectionObj(children)) {
+      if (isString(k)) {
+        return { ...tree, [k]: treeSet(rest, treeGet([ k ], tree), value) } :
+      } else {
+        throw new Error('')
+      }
+    }
+    return null
   }
-}
 
 /**
  * Set the value in a tree; mutable.
@@ -602,7 +611,7 @@ function treeSetMutable<T> (address: Address, tree, value: T): T | Tree {
   }
 }
 
-export function makeTree (init, mutable) {
+export function makeTree<T> (init: Tree<T> | null, mutable: boolean): TreeAccess<T> {
   let state = init
   return {
     get: (address) => {
@@ -1441,6 +1450,7 @@ export function makeStateCallers (component, stateTree, bindingTree,
  * @return {Object} The API functions, incuding getState, signals, and methods.
  */
 export function run (component, appEl, opts = {}) {
+
   // Create variables that will store the state for the whole lifetime of the
   // application. Similar to the redux model.
   let stateTree = makeTree(null, false)
