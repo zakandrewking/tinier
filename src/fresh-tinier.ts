@@ -1,4 +1,6 @@
-/** A rewrite of tinier */
+/** A rewrite of tinier.
+
+ */
 
 // -----------
 // Basic types
@@ -57,8 +59,6 @@ function constant <T>(val: T): () => T {
 
 /**
  * Check if the object is an array
- * @param {*} object - The object to test.
- * @return {Boolean}
  */
 export function isArray<T>(object): object is ReadonlyArray<T> {
   return Array.isArray(object)
@@ -68,45 +68,47 @@ export function isArray<T>(object): object is ReadonlyArray<T> {
 // Component & run functions
 // -------------------------
 
-type State = any
-type Init = () => State
+type Init<S> = (...any) => S
+type ModelValue = Component<any, any> | ArrayOf<any, any> | ObjectOf<any, any>
+interface Model { readonly [key: string]: ModelValue }
 
-interface Component {
+interface Component<S,M extends Model> {
   type: '@TINIER_COMPONENT'
-  displayName: string,
-  init: Init,
+  displayName: string
+  model: M
+  init: Init<S>
 }
 
-type DisplayName = string
-
-interface ComponentOptions {
-  displayName?: string,
-  // signalNames: SignalNames,
-  // signalSetup: () => void,
-  // model:       Model,
-  init?: Init,
-  // reducers:     {},
-  // methods:      {},
-  // willMount:    noop,
-  // didMount:     noop,
-  // shouldUpdate: defaultShouldUpdate,
-  // willUpdate:   noop,
-  // didUpdate:    noop,
-  // willUnmount:  noop,
-  // render:       noop,
+interface ComponentOptions<S,M> {
+  displayName?: string
+  // signalNames: SignalNames
+  // signalSetup: () => void
+  model?: M
+  init?: Init<S>
+  // reducers:     {}
+  // methods:      {}
+  // willMount:    noop
+  // didMount:     noop
+  // shouldUpdate: defaultShouldUpdate
+  // willUpdate:   noop
+  // didUpdate:    noop
+  // willUnmount:  noop
+  // render:       noop
 }
 
 /**
  * Create a tinier component.
  */
-export function createComponent (options: ComponentOptions = {}): Component {
+export function createComponent<S,M extends Model>(
+  options: ComponentOptions<S,M> = {}
+): Component<S,M> {
   // Default attributes
   const defaults = {
     displayName:  '',
     // signalNames:  [],
     // signalSetup:  noop,
-    // model:        {},
-    init: constant({}),
+    model: {} as M,
+    init: constant({}) as Init<S>,
     // reducers:     {},
     // methods:      {},
     // willMount:    noop,
@@ -129,34 +131,34 @@ export function createComponent (options: ComponentOptions = {}): Component {
   return { type: '@TINIER_COMPONENT', ...defaults, ...options }
 }
 
-interface ObjectOf {
+interface ObjectOf<S,M extends Model>{
   type: '@TINIER_OBJECT_OF'
-  component: Component
+  component: Component<S,M>
 }
 
 /**
  * Create an object representing many instances of this component, for use in a
  * tinier model.
  */
-export function objectOf (component: Component): ObjectOf {
+export function objectOf<S,M extends Model>(component: Component<S,M>): ObjectOf<S,M> {
   return { type: '@TINIER_OBJECT_OF', component }
 }
 
-interface ArrayOf {
+interface ArrayOf<S,M extends Model>{
   type: '@TINIER_ARRAY_OF'
-  component: Component
+  component: Component<S,M>
 }
 
 /**
  * Create an array representing many instances of this component, for use in a
  * tinier model.
  */
-export function arrayOf (component: Component): ArrayOf {
+export function arrayOf<S,M extends Model>(component: Component<S,M>): ArrayOf<S,M> {
   return { type: '@TINIER_ARRAY_OF', component }
 }
 
-interface RunOptions {
-  initialState?: State,
+interface RunOptions<S>{
+  initialState?: S,
 }
 
 interface Instance {
@@ -168,25 +170,79 @@ interface Instance {
   // signals
 }
 
+function isInCollection<T> (obj, k): obj is Collection<T> {
+  return k in obj
+}
+
+function getStateTree<S>(address: Address, state: S): any {
+  const res = address.reduce((node, k) => {
+    if (isInCollection(node, k)) {
+      const attr = node[k]
+      return attr
+    } else {
+      return null
+    }
+  }, state)
+  return res
+}
+
+function setStateTree (address: Address, state, value): void {
+  // if (address.length === 0) {
+  //   return value
+  // } else {
+  //   const [ k, rest ] = head(address)
+  //   const children = tree.children
+  //   if (children === null) {
+  //     return null
+  //   } else if (isCollectionAr(children)) {
+  //     if (isNumber(k)) {
+  //       const newVal =
+  //         return {
+  //           type:
+  //           [...children.slice(0, k),
+  //               treeSet(rest, treeGet([ k ], tree), value),
+  //               ...children.slice(k + 1)]
+  //     } else {
+  //       throw new Error('')
+  //     }
+  //   } else if (isCollectionObj(children)) {
+  //     if (isString(k)) {
+  //       return { ...tree, [k]: treeSet(rest, treeGet([ k ], tree), value) } :
+  //     } else {
+  //       throw new Error('')
+  //     }
+  //   }
+  //   return null
+  // }
+}
+
+function makeStateTree<S>(initialState: S) {
+  let state = initialState
+  return {
+    get: (address: Address) => getStateTree(address, state),
+    set: (address: Address, value) => setStateTree(address, state, value)
+  }
+}
+
 /**
  * Run a tinier component.
  */
-export function run (
-  component: Component,
-  appEl: DOMElement,
-  opts: RunOptions = {}
+export function run<S, M extends Model>(
+  component: Component<S, M>,
+  appEl: HTMLElement,
+  opts: RunOptions<S> = {}
 ): Instance {
-
-  // // Create variables that will store the state for the whole lifetime of the
-  // // application. Similar to the redux model.
-  // let stateTree = makeTree(null, false)
-  // const topBinding = tagType(NODE, { data: appEl, children: null })
-  // let bindingTree = makeTree(topBinding, true)
-  // let signalTree = makeTree(null, true)
 
   const initialState = 'initialState' in opts
     ? opts.initialState
     : component.init()
+
+  // Create variables that will store the state for the whole lifetime of the
+  // application. Similar to the redux model.
+  let stateTree = makeStateTree(initialState)
+  // const topBinding = tagType(NODE, { data: appEl, children: null })
+  // let bindingTree = makeTree(topBinding, true)
+  // let signalTree = makeTree(null, true)
 
   return {
     // setState, setStateNoRender, getState, reducers, methods, signals
@@ -197,9 +253,7 @@ export function run (
 // Rendering
 // ---------
 
-type AddressOrKey = Address | Key
-
-interface Binding {
+export interface Binding {
   type: '@TINIER_BINDING'
   address: Address
 }
@@ -207,17 +261,17 @@ interface Binding {
 /**
  * Create a new Tinier binding.
  */
-export function bind (addressOrKey: AddressOrKey): Binding {
+export function bind (addressOrKey: Address | Key): Binding {
   const address = isArray(addressOrKey) ? addressOrKey : [ addressOrKey ]
-  return { type: '@TINIER_BINDING', address }
+  return {
+    type: '@TINIER_BINDING',
+    address
+  }
 }
 
-// Note that JSX will pass null in when there are no attributes. In the
-// resulting Element, this will be an empty object {}.
 type ElementAttributes = { readonly [key: string]: string | number }
-type ElementAttributesIn = ElementAttributes | null
-type ElementChildren = Array<Binding | Element | string>
-interface Element {
+type ElementChildren = Array<Binding | TinierElement | string>
+export interface TinierElement {
   type: '@TINIER_ELEMENT'
   tagName: string
   attributes: ElementAttributes
@@ -226,25 +280,32 @@ interface Element {
 
 /**
  * Create a new TinierDOM element.
+ *
+ * Note that JSX will pass null in when there are no attributes.
  */
 export function createElement (
   tagName: string,
-  attributesIn: ElementAttributesIn,
+  attributesIn: ElementAttributes | null,
     ...children: ElementChildren
-): Element {
+): TinierElement {
   const attributes = attributesIn === null ? {} : attributesIn
-  return { type: '@TINIER_ELEMENT', tagName, attributes, children }
+  return {
+    type: '@TINIER_ELEMENT',
+    tagName,
+    attributes,
+    children
+  }
 }
 
-export function render (
-  container: DOMElement,
-    ...tinierElementsAr: Array<Element | string>
-): NestedBindings {
+// export function render (
+//   container: DOMElement,
+//     ...tinierElementsAr: Array<Element | string>
+// ): NestedBindings {
 
-  // Check inputs at runtime for JavaScript library.
-  if (!isDOMElement(container)) {
-    throw new Error('First argument must be a DOM Element.')
-  }
+//   // Check inputs at runtime for JavaScript library.
+//   if (!isDOMElement(container)) {
+//     throw new Error('First argument must be a DOM Element.')
+//   }
 
   // const tinierElements = flattenElementsAr(tinierElementsAr)
 
@@ -336,7 +397,7 @@ export function render (
 
   // // bindings array to object
   // return objectForBindings(bindingsAr.filter(b => b !== null))
-}
+// }
 
 // ----------
 // Export API
@@ -345,3 +406,37 @@ export function render (
 export default {
   arrayOf, objectOf, createComponent, run, bind, createElement, render
 }
+
+// -----
+// Tests
+// -----
+
+interface In {
+  e: number
+}
+
+interface St {
+  a: number
+  b: string
+}
+
+function makeSt ({ e }: In): St {
+  return {
+    a: e,
+    b: 'b'
+  }
+}
+
+function makeMo () {
+  return {
+    x: createComponent(),
+  }
+}
+
+const c = createComponent({
+  model: makeMo(),
+  init: makeSt,
+})
+
+const d = c.init({ e: 1 })
+const f = c.model.x
