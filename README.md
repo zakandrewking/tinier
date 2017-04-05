@@ -177,7 +177,7 @@ createElement('input', { then: function (el) { el.focus() } })
 
 ## API
 
-### tinier.createComponent({ ...args })
+### `tinier.createComponent({ ...args })`
 
 Arguments as `args` object:
 
