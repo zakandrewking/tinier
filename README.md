@@ -22,11 +22,42 @@ https://www.npmjs.com/package/tinier
 
 ## Components
 
-Tinier components are created with the `createComponent` function.
+A Tinier component is a portable object that describes a piece of a user
+interface. By nesting components, you can build up a user interface from smaller
+pieces. Each component describes that data that will define the interface
+(e.g. the text that appears on a button), the way to render that component, and
+the way each component communicates with its children and parents (e.g. when a
+button gets clicked).
+
+You can create a new component with the `createComponent` function. It takes one
+argument that is an object with keys and values for the various options that
+define the components. The `displayName` is a description that will appear in
+debugging menus:
 
 ```javascript
 MyComponent = createComponent({
   displayName: 'MyComponent',
+})
+```
+
+A simple component might render text in a new `div`. We use the `render`
+function to describe this:
+
+```javascript
+MyComponent = createComponent({
+  displayName: 'MyComponent',
+
+  render: () => <div>Hello World</div>
+})
+```
+
+If you are not using Babel, you can write the raw version like this:
+
+```javascript
+MyComponent = createComponent({
+  displayName: 'MyComponent',
+
+  render: function () { return createElement('div', {}, 'Hello World') }
 })
 ```
 
@@ -36,6 +67,20 @@ The `run` function binds a Tinier component to the DOM and renders it.
 var el = document.getElementById('my-container')
 run(MyComponent, el)
 ```
+
+### TODO
+
+- Initializing and using `state`
+- Getting a reference to `el`
+- Rendering an array of Tinier elements
+- Bindings need to be surround by a tag.
+- Return from render must be a Tinier element or array of Tinier elements and
+  strings (or the return value from `tinier.render`)
+- Calling `tinier.render` manually
+- Trick to reference component in its own model
+- ES5 and ES6 examples
+- Using pure reducers in parent components; will not be overloaded, so pass in
+  current state
 
 ## Lifecycle
 
@@ -111,11 +156,21 @@ didMount: ({ el }) => {
 },
 ```
 
+```javascript
+didMount: (args) => {
+  args.el.getElementsByClassName('new-todo')[0].focus()
+},
+```
+
 Or use the special `then` attribute like this if you want it to run every time
 the component renders:
 
 ```javascript
 <input then={ el => el.focus() } />
+```
+
+```javascript
+createElement('input', { then: function (el) { el.focus() } })
 ```
 
 - [MDN reference](https://developer.mozilla.org/en-US/docs/Web/HTML/Attributes)
@@ -131,4 +186,3 @@ Arguments as `args` object:
 - *model*:
 - *init*: (Object) => Object, Default
 - *signalNames*: `[String]`, default `[]` - A list of signal names as strings.
-- *interface*: `tinier.Interface | null`, default `null` - A Tinier Interface.
