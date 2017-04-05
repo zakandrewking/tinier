@@ -1216,16 +1216,18 @@ describe('bind', () => {
 
 describe('createDOMElement', () => {
   it('choose correct namespace -- html', () => {
-    const tEl = createElement('html', { 'href': 'http://a.com',
-                            'xlink:href': 'http://b.com', })
+    const tEl = createElement('html', {
+      href: 'http://a.com',
+      'xlink:href': 'http://b.com',
+      'xmlns:xlink': 'http://c.com'
+    })
     const el = createDOMElement(tEl, document.body)
-    // check element namespace
+    // Check element namespace
     assert.strictEqual(el.namespaceURI, 'http://www.w3.org/1999/xhtml')
-    // check attribute namespaces
-    assert.strictEqual(el.getAttributeNS('http://www.w3.org/1999/xhtml', 'href'),
-                       'http://a.com')
-    assert.strictEqual(el.getAttributeNS('http://www.w3.org/1999/xlink', 'href'),
-                       'http://b.com')
+    // Check attribute namespaces
+    assert.strictEqual(el.getAttribute('href'), 'http://a.com')
+    assert.strictEqual(el.getAttribute('xlink:href'), 'http://b.com')
+    assert.strictEqual(el.getAttribute('xmlns:xlink'), 'http://c.com')
   })
 
   it('choose correct namespace -- svg', () => {
@@ -1314,12 +1316,14 @@ describe('updateDOMElement', () => {
     assert.strictEqual(called, 1)
   })
 
-  it('takes then attribute', () => {
+  it('takes then attribute', (done) => {
     let called = null
     render(el, <input></input>)
     const newEl = el.firstChild
-    updateDOMElement(newEl, <input then={ el => called = el }></input>)
-    assert.strictEqual(called, newEl)
+    updateDOMElement(newEl, <input then={ arg => {
+      assert.strictEqual(arg, newEl)
+      done()
+    } }></input>)
   })
 })
 

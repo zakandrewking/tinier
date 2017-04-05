@@ -1578,8 +1578,10 @@ function explicitNamespace (name) {
   if (i !== -1) {
     const prefix = name.slice(0, i)
     if (prefix in NAMESPACES) {
-      // for xmlns, treat the whole name (e.g. xmlns:xlink) as the name
-      const newName = prefix === 'xmlns' ? name : name.slice(i + 1)
+      // for xmlns or xlink, treat the whole name (e.g. xmlns:xlink) as the name
+      const newName = prefix === 'xmlns' || prefix === 'xlink'
+            ? name
+            : name.slice(i + 1)
       return { name: newName, explicit: NAMESPACES[prefix] }
     } else {
       return { name, explicit: null }
@@ -1631,8 +1633,8 @@ function stripOn (name) {
 function setAttributeCheckBool (namespace, el, name, val) {
   // set boolean appropriately
   const valToSet = val === true ? name : val
-  if (namespace === NAMESPACES.xlink) {
-    el.setAttributeNS(namespace, 'xlink:' + name, valToSet)
+  if (namespace === NAMESPACES.xlink || namespace === NAMESPACES.xmlns) {
+    el.setAttributeNS(namespace, name, valToSet)
   } else {
     el.setAttribute(name, valToSet)
   }
