@@ -1337,6 +1337,19 @@ describe('objectForBindings', () => {
                                            { c: [ null, 4 ]} ])
     assert.deepEqual(res, { a: 1, b: 2, c: [ 3, 4 ] })
   })
+
+  it('choose correct namespace -- svg attribute & xlink', () => {
+    render(el, <svg></svg>)
+    const newEl = el.firstChild
+    // JSX does not support xlink:href
+    updateDOMElement(newEl, createElement('image', {
+      height: '100',
+      'xlink:href': 'http://example.svg'
+    }))
+    assert.strictEqual(newEl.attributes.height.namespaceURI, null)
+    assert.strictEqual(newEl.attributes['xlink:href'].namespaceURI,
+                       'http://www.w3.org/1999/xlink')
+  })
 })
 
 describe('render', () => {

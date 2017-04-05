@@ -1350,8 +1350,10 @@ export function makeStateCallers (component, stateTree, bindingTree,
  * @param {Object} component - A tinier component.
  * @param {*} appEl - An element to pass to the component's create, update, and
  *                    destroy methods.
- * @param {Object|null} initialState - The initial state. If null, then init()
- *                                     will be called to initialize the state.
+ * @param {Object|null} opts.initialState - The initial state. If null, then
+ *                                          init() will be called to initialize
+ *                                          the state.
+ * @param {Boolean} opts.verbose - If true, print messages.
  * @return {Object} The API functions, incuding getState, signals, and methods.
  */
 export function run (component, appEl, opts = {}) {
@@ -1598,9 +1600,9 @@ export function createDOMElement (tinierEl, parent) {
   const { name, explicit } = explicitNamespace(tag)
   const ns = (explicit !== null ? explicit :
               (tag in NAMESPACES ? NAMESPACES[tag] : parent.namespaceURI))
-  const el = (ns === NAMESPACES.xhtml ?
-              document.createElement(name) :
-              document.createElementNS(ns, name))
+  const el = ns === NAMESPACES.xhtml
+        ? document.createElement(name)
+        : document.createElementNS(ns, name)
   return updateDOMElement(el, tinierEl)
 }
 
@@ -1629,10 +1631,10 @@ function stripOn (name) {
 function setAttributeCheckBool (namespace, el, name, val) {
   // set boolean appropriately
   const valToSet = val === true ? name : val
-  if (namespace === NAMESPACES.xhtml) {
-    el.setAttribute(name, valToSet)
+  if (namespace === NAMESPACES.xlink) {
+    el.setAttributeNS(namespace, 'xlink:' + name, valToSet)
   } else {
-    el.setAttributeNS(namespace, name, valToSet)
+    el.setAttribute(name, valToSet)
   }
 }
 
