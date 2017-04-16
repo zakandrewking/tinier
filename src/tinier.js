@@ -1473,6 +1473,9 @@ export function addressToObj (address, val) {
   }
 }
 
+/**
+ *
+ */
 function objectForBindingsArray (bindings) {
   // Check arrays and find longest internal array.
   let longest = 0
@@ -1502,6 +1505,9 @@ function objectForBindingsArray (bindings) {
   return acc
 }
 
+/**
+ *
+ */
 function objectForBindingsObject (bindings) {
   return bindings.reduce((acc, binding) => {
     if (isArray(binding))
@@ -1519,6 +1525,11 @@ function objectForBindingsObject (bindings) {
   }, {})
 }
 
+/**
+ * Process object returned by tinier.render.
+ * @param bindings -
+ * @return
+ */
 export function objectForBindings (bindings) {
   return isArray(bindings[0]) ?
     objectForBindingsArray(bindings) :

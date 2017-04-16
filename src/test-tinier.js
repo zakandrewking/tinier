@@ -28,6 +28,7 @@ import {
 
 import { describe, it, afterEach } from 'mocha'
 import { assert } from 'chai'
+import now from 'performance-now'
 
 // DOM setup
 
@@ -1325,6 +1326,19 @@ describe('updateDOMElement', () => {
       done()
     } }></input>)
   })
+
+  it('choose correct namespace -- svg attribute & xlink', () => {
+    render(el, <svg></svg>)
+    const newEl = el.firstChild
+    // JSX does not support xlink:href
+    updateDOMElement(newEl, createElement('image', {
+      height: '100',
+      'xlink:href': 'http://example.svg'
+    }))
+    assert.strictEqual(newEl.attributes.height.namespaceURI, null)
+    assert.strictEqual(newEl.attributes['xlink:href'].namespaceURI,
+                       'http://www.w3.org/1999/xlink')
+  })
 })
 
 describe('objectForBindings', () => {
@@ -1342,17 +1356,23 @@ describe('objectForBindings', () => {
     assert.deepEqual(res, { a: 1, b: 2, c: [ 3, 4 ] })
   })
 
-  it('choose correct namespace -- svg attribute & xlink', () => {
-    render(el, <svg></svg>)
-    const newEl = el.firstChild
-    // JSX does not support xlink:href
-    updateDOMElement(newEl, createElement('image', {
-      height: '100',
-      'xlink:href': 'http://example.svg'
-    }))
-    assert.strictEqual(newEl.attributes.height.namespaceURI, null)
-    assert.strictEqual(newEl.attributes['xlink:href'].namespaceURI,
-                       'http://www.w3.org/1999/xlink')
+  it('check infinite recursion', () => {
+    const bindingsArray = []
+    for (let i = 0; i < 2; i++) {
+      bindingsArray.push([ 'data', i ])
+    }
+    const res = objectForBindings(bindingsArray)
+  })
+
+  it('time arrays', () => {
+    const bindingsArray = []
+    for (let i = 0; i < 10; i++) {
+      bindingsArray.push([ 'data', i ])
+    }
+    console.log(bindingsArray)
+    const t = now()
+    const res = objectForBindings(bindingsArray)
+    console.log(now() - t)
   })
 })
 
