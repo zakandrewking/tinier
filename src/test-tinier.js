@@ -17,11 +17,11 @@ import {
   ARRAY_OF, OBJECT_OF, COMPONENT, ARRAY, OBJECT, NODE, NULL, TOP, CREATE,
   UPDATE, DESTROY, noop, tail, head, fromPairs, get, isUndefined, isObject,
   isArray, isFunction, mapValues, reduceValues, zipArrays, zipObjects,
-  filterValues, any, tagType, checkType, match, hasChildren, checkRenderResult,
-  updateEl, addressWith, addressEqual, checkState, diffWithModelMin, makeTree,
-  makeSignal, makeOneSignalAPI, makeChildSignalsAPI, reduceChildren,
-  mergeSignals, makeStateCallers, ELEMENT, BINDING, addressToObj,
-  objectForBindings, createDOMElement, getStyles, updateDOMElement,
+  filterValues, any, tagType, checkType, match, hasChildren, makeBindingKey,
+  processBindings, updateEl, addressWith, addressEqual, checkState,
+  diffWithModelMin, makeTree, makeSignal, makeOneSignalAPI, makeChildSignalsAPI,
+  reduceChildren, mergeSignals, makeStateCallers, ELEMENT, BINDING, BINDINGS,
+  addressToObj, createDOMElement, getStyles, updateDOMElement,
 } from './tinier'
 
 // testing functions
@@ -658,115 +658,149 @@ describe('hasChildren', () => {
   })
 })
 
-describe('checkRenderResult', () => {
-  it('errors if bindings shape does not match', () => {
-    assert.throws(() => {
-      const model = { a: arrayOf(DefComponent) }
-      const state = { a: [ { x: 10 } ] }
-      const userBindings = { a: EL1 }
-      checkRenderResult(userBindings, model, state)
-    }, /Shape of the bindings object does not match the model/)
+describe('makeBindingKey', () => {
+  it('stringifies numbers', () => {
+    assert.strictEqual(makeBindingKey(1.2), '1.2')
   })
 
-  it('no error if a binding is missing', () => {
+  it('returns strings', () => {
+    assert.strictEqual(makeBindingKey('a'), 'a')
+  })
+
+  it('stringifies arrays with escaped commas', () => {
+    assert.strictEqual(makeBindingKey([ 'a,', 'b\\', 'c' ]), 'a\\,,b\\\\,c')
+  })
+})
+
+describe('processBindings', () => {
+  it('converts bindings to hash', () => {
     // not every component needs a binding
     const model = { a: DefComponent, b: DefComponent }
     const state = { a: { x: 10 }, b: { x: 20 } }
-    const userBindings = { a: EL1 }
-    const res = checkRenderResult(userBindings, model, state)
-    assert.deepEqual(res, userBindings)
+    const bindings = {
+      type: BINDINGS,
+      data: [
+        [ 'a', EL1 ],
+        [ [ 'a', 'b', 3 ], EL2 ],
+      ],
+    }
+    const renderResult = processBindings(bindings, model, state)
+    assert.deepEqual(renderResult, { a: EL1, 'a,b,3': EL2 })
   })
 
-  it('errors if bindings shape does not match -- arrayOf', () => {
-    assert.throws(() => {
-      const model = { a: arrayOf(DefComponent) }
-      const state = { a: [ { x: 10 } ] }
-      const userBindings = { a: EL1 }
-      checkRenderResult(userBindings, model, state)
-    }, /Shape of the bindings object does not match the model/)
-  })
+  // TODO move these checks downstream to consuming the bindings
 
-  it('errors if bindings shape does not match -- extra array elements', () => {
-    assert.throws(() => {
-      const model = { a: arrayOf(DefComponent) }
-      const state = { a: [ { x: 10 } ] }
-      const userBindings = { a: [ EL1, EL2 ] }
-      checkRenderResult(userBindings, model, state)
-    }, /Shape of the bindings object does not match the model/)
-  })
+  // it('errors if bindings shape does not match', () => {
+  //   assert.throws(() => {
+  //     const model = { a: arrayOf(DefComponent) }
+  //     const state = { a: [ { x: 10 } ] }
+  //     const bindings = { type: BINDINGS, data: [ [ 'a', EL1 ] ] }
+  //     processBindings(bindings, model, state)
+  //   }, /Bindings do not match the model/)
+  // })
 
-  it('errors if bindings shape does not match -- extra attributes', () => {
-    assert.throws(() => {
-      const model = { a: objectOf(DefComponent) }
-      const state = { a: { b: { x: 10 } } }
-      const userBindings = { a: { b: EL1, c: EL2 } }
-      checkRenderResult(userBindings, model, state)
-    }, /Shape of the bindings object does not match the model/)
-  })
+  // it('errors if bindings shape does not match -- arrayOf', () => {
+  //   assert.throws(() => {
+  //     const model = { a: arrayOf(DefComponent) }
+  //     const state = { a: [ { x: 10 } ] }
+  //     const bindings = { type: BINDINGS, data: [ [ 'a', EL1 ] ] }
+  //     processBindings(bindings, model, state)
+  //   }, /Bindings do not match the model/)
+  // })
+
+  // it('errors if bindings shape does not match -- extra array elements', () => {
+  //   assert.throws(() => {
+  //     const model = { a: arrayOf(DefComponent) }
+  //     const state = { a: [ { x: 10 } ] }
+  //     const bindings = {
+  //       type: BINDINGS,
+  //       data: [ [ [ 'a', 0 ], EL1 ], [ [ 'a', 1 ], EL2 ] ],
+  //     }
+  //     processBindings(bindings, model, state)
+  //   }, /Bindings do not match the model/)
+  // })
+
+  // it('errors if bindings shape does not match -- extra attributes', () => {
+  //   assert.throws(() => {
+  //     const model = { a: objectOf(DefComponent) }
+  //     const state = { a: { b: { x: 10 } } }
+  //     const bindings = {
+  //       type: BINDINGS,
+  //       data: [ [ [ 'a', 'b' ], EL1 ], [ [ 'a', 'c' ], EL2 ] ],
+  //     }
+  //     processBindings(bindings, model, state)
+  //   }, /Bindings do not match the model/)
+  // })
 })
 
 describe('updateEl', () => {
   it('returns null if DESTROY', () => {
     const diffVal = DESTROY
-    const { bindings } = updateEl([], DefComponent, {}, diffVal, EL1, EL1,
-                                  defStateCallers, {})
-    assert.isNull(bindings)
+    const { renderResult } = updateEl([], DefComponent, {}, diffVal, EL1,
+                                      EL1, defStateCallers, {})
+    assert.isNull(renderResult)
   })
 
   it('returns binding', () => {
     const component = createComponent({
       model: ({ c: DefComponent }),
-      render: ({ el }) => ({ c: el }),
+      render: ({ el }) => ({ type: BINDINGS, data: [ [ 'c', el ] ] }),
     })
     const state = { c: {} }
     const diffVal = UPDATE
-    const { bindings } = updateEl([], component, state, diffVal, EL1, EL1,
-                                  defStateCallers, {})
-    assert.deepEqual(bindings, { c: EL1 })
+    const { renderResult } = updateEl([], component, state, diffVal, EL1, EL1,
+                                      defStateCallers, {})
+    assert.deepEqual(renderResult, { c: EL1 })
   })
 
   it('accepts null for tinierState', () => {
     const component = createComponent({
       model: ({ c: DefComponent }),
-      render: ({ el }) => ({ c: el }),
+      render: ({ el }) => ({ type: BINDINGS, data: [ [ 'c', el ] ] }),
     })
     const state = { c: {} }
     const diffVal = CREATE
-    const { bindings } = updateEl([], component, state, diffVal, EL1, EL1,
-                                  defStateCallers, {})
-    assert.deepEqual(bindings, { c: EL1 })
+    const { renderResult } = updateEl([], component, state, diffVal, EL1, EL1,
+                                      defStateCallers, {})
+    assert.deepEqual(renderResult, { c: EL1 })
   })
 
   it('updates with new el', () => {
-    const component = createComponent({ render: ({ el }) => ({ a: el }) })
+    const component = createComponent({
+      render: ({ el }) => ({ type: BINDINGS, data: [ [ 'a', el ] ] }),
+    })
     const state = { c: {} }
     const diffVal = UPDATE
-    const { bindings, lastRenderedEl } = updateEl([], component, state, diffVal,
-                                                  EL1, EL2, defStateCallers, {})
-    assert.deepEqual(bindings, { a: EL2 })
+    const { renderResult, lastRenderedEl } = updateEl([], component, state,
+                                                      diffVal, EL1, EL2,
+                                                      defStateCallers, {})
+    assert.deepEqual(renderResult, { a: EL2 })
     assert.strictEqual(lastRenderedEl, EL2)
   })
 
   it('old el can be null', () => {
-    const component = createComponent({ render: ({ el }) => ({ a: el }) })
+    const component = createComponent({
+      render: ({ el }) => ({ type: BINDINGS, data: [ [ 'a', el ] ] }),
+    })
     const state = { c: {} }
     const diffVal = UPDATE
-    const { bindings, lastRenderedEl } = updateEl([], component, state, diffVal,
-                                                  null, EL1, defStateCallers, {})
-    assert.deepEqual(bindings, { a: EL1 })
+    const { renderResult, lastRenderedEl } = updateEl([], component, state,
+                                                      diffVal, null, EL1,
+                                                      defStateCallers, {})
+    assert.deepEqual(renderResult, { a: EL1 })
     assert.strictEqual(lastRenderedEl, EL1)
   })
 
   it('does not call shouldUpdate', () => {
     const component = createComponent({
-      render: ({ el }) => el,
+      render: ({ el }) => 'BAD',
       shouldUpdate: () => { throw new Error('NOPE') },
     })
     const state = { c: {} }
     const diffVal = null
-    const { bindings } = updateEl([], component, state, diffVal, EL1, EL1,
-                                  defStateCallers, {})
-    assert.isNull(bindings)
+    const { renderResult } = updateEl([], component, state, diffVal, EL1, EL1,
+                                      defStateCallers, {})
+    assert.isNull(renderResult)
   })
 })
 
@@ -1129,7 +1163,7 @@ describe('createComponent/run', () => {
       },
       methods: { add: ({ signals, v }) => signals.add.call({ v }) },
       init: () => ({ child: Child.init() }),
-      render: () => ({ child: EL2 }),
+      render: () => ({ type: BINDINGS, data: [ [ 'child', EL2 ] ] }),
     })
 
     const { getState, setState, signals } = run(Parent, EL1)
@@ -1144,11 +1178,6 @@ describe('createComponent/run', () => {
     const Child = createComponent({
       displayName: 'Child',
       init: () => ({ val: 1 }),
-      render: ({ state, methods, el }) => EL2,
-      didUpdate: ({ signals }) => {
-      },
-      willUnmount: ({ signals }) => {
-      },
     })
 
     const Parent = createComponent({
@@ -1166,7 +1195,10 @@ describe('createComponent/run', () => {
         }),
       },
       render: ({ state }) => {
-        return { child: state.child.map(() => EL1) }
+        return {
+          type: BINDINGS,
+          data: state.child.map((_, i) => [ [ 'child', i ], EL1 ]),
+        }
       },
     })
 
@@ -1175,17 +1207,22 @@ describe('createComponent/run', () => {
     // the bindings get out of balance, so this should test for that.
     signals.increment.call({})
   })
+
+  it('calls tinier.render automagically', () => {
+    const Component = createComponent({
+      displayName: 'Component',
+      render: () => <div id="new"></div>,
+    })
+    run(Component, el)
+    const newEl = el.firstChild
+    assert.strictEqual(newEl.id, 'new')
+    assert.strictEqual(newEl.textContent, '')
+  })
 })
 
 // -------------------------------------------------------------------
 // DOM
 // -------------------------------------------------------------------
-
-describe('addressToObj', () => {
-  it('nested arrays and objects', () => {
-    assert.deepEqual(addressToObj([ 2, 'a' ], 'VAL')[2], { a: 'VAL' })
-  })
-})
 
 describe('createElement', () => {
   it('returns an object', () => {
@@ -1206,12 +1243,12 @@ describe('createElement', () => {
 describe('bind', () => {
   it('accepts an address', () => {
     assert.deepEqual(bind([ 'a', 'b' ]),
-                     { type: BINDING, address: [ 'a', 'b' ] })
+                     { type: BINDING, data: [ 'a', 'b' ] })
   })
 
   it('accepts a single loc', () => {
     assert.deepEqual(bind('a'),
-                     { type: BINDING, address: [ 'a' ] })
+                     { type: BINDING, data: 'a' })
   })
 })
 
@@ -1341,41 +1378,6 @@ describe('updateDOMElement', () => {
   })
 })
 
-describe('objectForBindings', () => {
-  it('arrays', () => {
-    const ar3 = Array(3)
-    ar3[2] = 'c'
-    const res = objectForBindings([ [ null, 'b', null, 'd', 0 ], [ 'a' ],
-                                           ar3 ])
-    assert.deepEqual(res, [ 'a', 'b', 'c', 'd', 0 ])
-  })
-
-  it('objects', () => {
-    const res = objectForBindings([ { a: 1 }, { b: 2, c: [ 3 ] },
-                                           { c: [ null, 4 ]} ])
-    assert.deepEqual(res, { a: 1, b: 2, c: [ 3, 4 ] })
-  })
-
-  it('check infinite recursion', () => {
-    const bindingsArray = []
-    for (let i = 0; i < 2; i++) {
-      bindingsArray.push([ 'data', i ])
-    }
-    const res = objectForBindings(bindingsArray)
-  })
-
-  it('time arrays', () => {
-    const bindingsArray = []
-    for (let i = 0; i < 10; i++) {
-      bindingsArray.push([ 'data', i ])
-    }
-    console.log(bindingsArray)
-    const t = now()
-    const res = objectForBindings(bindingsArray)
-    console.log(now() - t)
-  })
-})
-
 describe('render', () => {
   afterEach(() => {
     // clear DOM
@@ -1470,20 +1472,28 @@ describe('render', () => {
 
   it('returns a bindings object -- top', () => {
     const bindings = render(el, bind([ 'a', 'b' ]))
-    const expect = { a: { b: el } }
+    const expect = {
+      type: BINDINGS,
+      data: [ [ [ 'a', 'b' ], el ] ],
+    }
     assert.deepEqual(bindings, expect)
   })
 
   it('returns a bindings object -- no array, string', () => {
     const bindings = render(el, bind('at'))
-    const expect = { at: el }
+    const expect = {
+      type: BINDINGS,
+      data: [ [ 'at', el ] ],
+    }
     assert.deepEqual(bindings, expect)
   })
 
   it('returns a bindings object -- no array, integer', () => {
     const bindings = render(el, bind(1))
-    const expect = Array(2)
-    expect[1] = el
+    const expect = {
+      type: BINDINGS,
+      data: [ [ 1, el ] ],
+    }
     assert.deepEqual(bindings, expect)
   })
 
@@ -1495,10 +1505,13 @@ describe('render', () => {
         <a href="goo.gl">{ bind([ 'a', 'c' ]) }</a>
       </div>
     )
-    const expect = { a: {
-      b: el.firstChild.children[0],
-      c: el.firstChild.children[1],
-    } }
+    const expect = {
+      type: BINDINGS,
+      data: [
+        [ [ 'a', 'b' ], el.firstChild.children[0] ],
+        [ [ 'a', 'c' ], el.firstChild.children[1] ],
+      ]
+    }
     assert.deepEqual(bindings, expect)
   })
 
@@ -1522,8 +1535,8 @@ describe('render', () => {
     assert.strictEqual(el.firstChild.childNodes.length, 4)
     assert.strictEqual(el.firstChild.childNodes[0].id, 'a')
     assert.strictEqual(el.firstChild.childNodes[3].textContent, ' Tashi')
-    assert.strictEqual(bindings.length, 3)
-    assert.strictEqual(bindings[0], el.firstChild.firstChild)
+    assert.strictEqual(bindings.data.length, 3)
+    assert.strictEqual(bindings.data[0][1], el.firstChild.firstChild)
   })
 
   it('adds listeners', (done) => {

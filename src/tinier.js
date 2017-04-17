@@ -1,5 +1,7 @@
 /** @module tinier */
 
+import * as id from 'incremental-dom'
+
 // constants
 export const ARRAY_OF    = '@TINIER_ARRAY_OF'
 export const OBJECT_OF   = '@TINIER_OBJECT_OF'
@@ -17,6 +19,10 @@ export const TOP         = '@TINIER_TOP'
 export const CREATE      = '@TINIER_CREATE'
 export const UPDATE      = '@TINIER_UPDATE'
 export const DESTROY     = '@TINIER_DESTROY'
+export const BINDING     = '@TINIER_BINDING'
+export const BINDINGS    = '@TINIER_BINDINGS'
+export const ELEMENT     = '@TINIER_ELEMENT'
+const LISTENER_OBJECT    = '@TINIER_LISTENERS'
 
 // basic functions
 function noop () {}
@@ -48,11 +54,10 @@ export function fromPairs (pairs) {
 }
 
 /**
- * Get the property of the object or index of the array, or return the default
- * value.
+ * Get the property of the object or index of the array, or return null.
  * @param {Object|Array} object - An object or array.
  * @param {String} property - An property of the object.
- * @return {*} The value of the property or, if not present, the default value.
+ * @return {*} The value of the property or, if not present, null.
  */
 export function get (object, property) {
   return (object &&
@@ -201,6 +206,7 @@ function defer (fn) {
 
 /**
  * Adds a tag to the object.
+ * TODO Do this inline for performance.
  */
 export function tagType (type, obj) {
   if (!isString(type)) {
@@ -260,157 +266,161 @@ function throwUnrecognizedType (node) {
 // Update components
 // -------------------------------------------------------------------
 
-/**
- * Determine whether the model has any child components.
- */
-export function hasChildren (node) {
-  return match(
-    node,
-    {
-      [ARRAY_OF]: () => true,
-      [OBJECT_OF]: () => true,
-      [COMPONENT]: () => true,
-      [ARRAY]: node => any(node.map(hasChildren)),
-      [OBJECT]: node => any(Object.keys(node).map(k => hasChildren(node[k]))),
-    }
-  )
+// TODO use this approach for all match operations, to avoid redefining
+// functions every time. This will mean match needs to accept more arguments to
+// pass into these functions. Or, just use if/then statements; is there really
+// any advantage to match()?
+const match_hasChildren = {
+  [ARRAY_OF]: () => true,
+  [OBJECT_OF]: () => true,
+  [COMPONENT]: () => true,
+  [ARRAY]: node => any(node.map(hasChildren)),
+  [OBJECT]: node => any(Object.keys(node).map(k => hasChildren(node[k]))),
 }
 
-function checkRenderResultRecurse (userBindings, node, state) {
-  const updateRecurse = (s, k) => {
-    const u = k === null ? userBindings : get(userBindings, k)
-    if (userBindings !== null && u === null) {
-      throw new Error('Shape of the bindings object does not match the model.' +
-                      'Model: ' + node + '  Bindings object: ' + userBindings)
-    }
+/**
+ * Determine whether the model has any child components.
+ * @param {Object} A node.
+ * @return {Boolean} True if the node has any children.
+ */
+export function hasChildren (node) {
+  return match(node, match_hasChildren)
+}
+
+/**
+ * Convert string, number, or array to hashable string.
+ * @param {String|Number|Array} input
+ * @return {String} Hashable string.
+ */
+export function makeBindingKey (input) {
+  if (isArray(input)) {
+    // Separate with , and escape commas
+    return input
+      .map(x => String(x).replace(',', '\\,').replace(/\\$/, '\\\\'))
+      .join(',')
+  } else {
+    return String(input)
   }
-  const recurse = (n, k) => {
-    checkRenderResultRecurse(get(userBindings, k), n, get(state, k))
-  }
-  match(
-    node,
-    {
-      [OBJECT_OF]: objOf => {
-        // check for extra attributes
-        if (userBindings !== null
-            && any(Object.keys(userBindings).map(k => !(k in state)))) {
-          throw new Error('Shape of the bindings object does not match the ' +
-                          'model. Model: ' + node + ' Bindings object: ' +
-                          userBindings)
-        } else {
-          mapValues(state, updateRecurse)
-        }
-      },
-      [ARRAY_OF]: arOf => {
-        // check array lengths
-        if (userBindings !== null && state.length !== userBindings.length) {
-          throw new Error('Shape of the bindings object does not match the ' +
-                          'model. Model: ' + node + ' Bindings object: ' +
-                          userBindings)
-        } else {
-          state.map(updateRecurse)
-        }
-      },
-      [COMPONENT]: component => updateRecurse(state, null),
-      [ARRAY]: ar => {
-        if (userBindings !== null && !isArray(userBindings)) {
-          throw new Error('Shape of the bindings object does not match the ' +
-                          'model. Model: ' + node + ' Bindings object: ' +
-                          userBindings)
-        } else {
-          ar.map(recurse)
-        }
-      },
-      [OBJECT]: obj => {
-        if (userBindings !== null && isArray(userBindings)) {
-          throw new Error('Shape of the bindings object does not match the ' +
-                          'model. Model: ' + node + ' Bindings object: ' +
-                          userBindings)
-        } else {
-          mapValues(obj, recurse)
-        }
-      }
-    }
-  )
 }
 
 /**
  * Check the result of render against the model and state.
  * @param {Object} node - A model node.
  * @param {*} state - A state node.
- * @param {Object} userBindings - The new bindings returned by render.
- * @return {Object} The userBindings object.
+ * @param {Object} bindings - The new bindings returned by render.
+ * @return {Object} The render result object.
  */
-export function checkRenderResult (userBindings, node, state) {
-  checkRenderResultRecurse(userBindings, node, state)
-  return userBindings
+export function processBindings (bindings) {
+  const renderResult = {}
+  for (let i = 0, l = bindings.data.length; i < l; i++) {
+    const thisBinding = bindings.data[i]
+    renderResult[makeBindingKey(thisBinding[0])] = thisBinding[1]
+  }
+  return renderResult
+}
+
+/**
+ *
+ */
+function runAndProcessRender (shouldUpdate, component, arg) {
+  if (shouldUpdate) {
+    const res = component.render(arg)
+    if (res == null) {
+      // Render might return null or undefined if there are no children
+      return null
+    } else if (checkType(BINDINGS, res)) {
+      return processBindings(res)
+    } else if (isArray(res)) {
+      return processBindings(render(arg.el, ...res))
+    } else {
+      return processBindings(render(arg.el, res))
+    }
+  } else {
+    return null
+  }
 }
 
 /**
  * Run lifecycle functions for the component.
- * @param {Object} address -
+ * @param {Array} address -
  * @param {Object} component -
  * @param {Object} state -
  * @param {Object} diffVal -
  * @param {Object|null} lastRenderedEl - The element rendered in previously, if
  *                                       there was one.
- * @param {Object|null} el - The element to render in provided by
- *                           component.render.
+ * @param {Object} renderResult - The bindings lookup object.
+ * @param {Array} relativeAddress - The address relative to the parent
+ *                                  component.
  * @param {Object} stateCallers -
  * @return {Object}
  */
-export function updateEl (address, component, state, diffVal, lastRenderedEl, el,
-                          stateCallers, opts) {
-  // the object passed to lifecycle functions
+export function updateEl (address, component, state, diffVal, lastRenderedEl,
+                          el, stateCallers, opts) {
+  // The object passed to lifecycle functions
   const reducers = patchReducersWithState(address, component, stateCallers.callReducer)
   const signals = patchSignals(address, component, stateCallers.callSignal)
   const methods = patchMethods(address, component, stateCallers.callMethod,
                                reducers, signals)
-  const arg = { state, methods, reducers, signals, el, lastRenderedEl }
 
-  // warn if the el is null
+  // Warn if the el is null
   if (el === null && !(diffVal === DESTROY) && component.render !== noop) {
     throw new Error('No binding provided for component ' + component.displayName
                     + ' at [' + address.join(', ') + '].')
   }
 
-  if (diffVal === DESTROY) {
-    // destroy
-    component.willUnmount(arg)
-    return { bindings: null, lastRenderedEl }
-  } else {
-    // create or update
-    const shouldUpdate = (diffVal === CREATE || diffVal === UPDATE ||
-                          el !== lastRenderedEl)
+  const arg = { state, methods, reducers, signals, el, lastRenderedEl }
 
-    if      (diffVal === CREATE) component.willMount(arg)
-    else if (shouldUpdate)     component.willUpdate(arg)
+  if (diffVal === DESTROY) {
+    // Destroy
+    component.willUnmount(arg)
+    return { renderResult: null, lastRenderedEl }
+  } else {
+    // Create or update
+    const shouldUpdate = (diffVal === CREATE
+                          || diffVal === UPDATE
+                          || el !== lastRenderedEl)
+
+    if (diffVal === CREATE) {
+      component.willMount(arg)
+    } else if (shouldUpdate) {
+      component.willUpdate(arg)
+    }
 
     if (opts.verbose && shouldUpdate) {
       console.log('Rendering ' + component.displayName + ' at [' +
                   address.join(', ') + '].')
     }
 
-    // render
-    const bindings = shouldUpdate ?
-            checkRenderResult(component.render(arg), component.model, state) :
-            null
-    // check result
-    if (shouldUpdate && bindings === null && hasChildren(component.model)) {
+    const nextRenderResult = runAndProcessRender(shouldUpdate, component, arg)
+
+    // Check result
+    if (shouldUpdate
+        && nextRenderResult === null
+        && hasChildren(component.model)) {
       throw new Error('The render function of component ' +
                       component.displayName + ' did not return new bindings')
     }
 
-    // These need to be asynchronous.
+    // These need to be asynchronous
     if (diffVal === CREATE) {
       defer(() => component.didMount(arg))
     } else if (shouldUpdate) {
       defer(() => component.didUpdate(arg))
     }
 
-    // If the component rendered, then change lastEl.
-    return { bindings, lastRenderedEl: shouldUpdate ? el : lastRenderedEl }
+    // If the component rendered, then change lastEl
+    return {
+      renderResult: nextRenderResult,
+      lastRenderedEl: shouldUpdate ? el : lastRenderedEl
+    }
   }
+}
+
+const match_dropNodes = {
+  [NODE]: node => node.data,
+  [OBJECT]: obj => mapValues(obj, dropNodes),
+  [ARRAY]: ar => ar.map(dropNodes),
+  [NULL]: () => null,
 }
 
 /**
@@ -418,12 +428,7 @@ export function updateEl (address, component, state, diffVal, lastRenderedEl, el
  * leaves.
  */
 function dropNodes (tree) {
-  return match(tree, {
-    [NODE]: node => node.data,
-    [OBJECT]: obj => mapValues(obj, dropNodes),
-    [ARRAY]: ar => ar.map(dropNodes),
-    [NULL]: () => null,
-  })
+  return match(tree, match_dropNodes)
 }
 
 /**
@@ -437,31 +442,38 @@ function dropNodes (tree) {
  * @return {Object}
  */
 function updateComponents (address, node, state, diff, bindings, renderResult,
-                           stateCallers, opts) {
+                           relativeAddress, stateCallers, opts) {
   const updateRecurse = ([ d, s ], k) => {
     // TODO in updateRecurse functions where k can be null, there must be a
     // nicer way to organize things with fewer null checks
     const component = k !== null ? node.component : node
     const newAddress = k !== null ? addressWith(address, k) : address
+    const newRelativeAddress = k !== null
+          ? addressWith(relativeAddress, k)
+          : relativeAddress
     const b = k !== null ? get(bindings, k) : bindings
-    const r = k !== null ? get(renderResult, k) : renderResult
+
+    // Get binding el
+    const el = renderResult[makeBindingKey(newRelativeAddress)]
+
     // Update the component. If DESTROY, then there will not be a binding.
-    const res = updateEl(newAddress, component, s, d.data, get(b, 'data'), r,
+    const res = updateEl(newAddress, component, s, d.data, get(b, 'data'), el,
                          stateCallers, opts)
     // Fall back on old bindings.
-    const nextRenderResult = res.bindings !== null ? res.bindings :
-            dropNodes(b.children)
+    const nextRenderResult = res.renderResult !== null
+          ? res.renderResult
+          : dropNodes(get(b, 'children'))
     const data = res.lastRenderedEl
     // update children
     const children = updateComponents(newAddress, component.model, s,
                                       d.children, get(b, 'children'),
-                                      nextRenderResult, stateCallers, opts)
+                                      nextRenderResult, [], stateCallers, opts)
     return tagType(NODE, { data, children })
   }
   const recurse = (n, k) => {
     return updateComponents(addressWith(address, k), n, get(state, k), diff[k],
-                            get(bindings, k), get(renderResult, k),
-                            stateCallers, opts)
+                            get(bindings, k), renderResult,
+                            addressWith(relativeAddress, k), stateCallers, opts)
   }
   return match(
     node,
@@ -776,10 +788,11 @@ function singleOrAll (modelNode, address, minTreeAr) {
  */
 export function diffWithModelMin (modelNode, state, lastState, address,
                                   triggeringAddress) {
-  // 1. calculate whole diff tree
+  // Calculate whole diff tree
   const diff = diffWithModel(modelNode, state, lastState, address,
                              triggeringAddress)
-  // 2. trim the tree for the two needs
+  // TODO Trim the tree for the two needs, if it's clear that there is a
+  // performance benefit
   return {
     minSignals: {
       diff,
@@ -859,21 +872,19 @@ function makeSignalsAPI (signalNames, isCollection) {
   }))
 }
 
+const match_makeChildSignalsAPI = {
+  [OBJECT_OF]: node => makeSignalsAPI(node.component.signalNames, true),
+  [ARRAY_OF]:  node => makeSignalsAPI(node.component.signalNames, true),
+  [COMPONENT]: node => makeSignalsAPI(node.signalNames, false),
+  [ARRAY]: ar => ar.map(makeChildSignalsAPI).filter(notNull),
+  [OBJECT]: obj => filterValues(mapValues(obj, makeChildSignalsAPI), notNull),
+}
+
 /**
  * Implement the childSignals API.
  */
 export function makeChildSignalsAPI (model) {
-  return match(
-    model,
-    {
-      [OBJECT_OF]: node => makeSignalsAPI(node.component.signalNames, true),
-      [ARRAY_OF]:  node => makeSignalsAPI(node.component.signalNames, true),
-      [COMPONENT]: node => makeSignalsAPI(node.signalNames, false),
-      [ARRAY]: ar => ar.map(makeChildSignalsAPI).filter(notNull),
-      [OBJECT]: obj => filterValues(mapValues(obj, makeChildSignalsAPI), notNull),
-    },
-    constant(null)
-  )
+  return match(model, match_makeChildSignalsAPI, constant(null))
 }
 
 /**
@@ -1308,19 +1319,20 @@ export function makeCallReducer (topComponent, stateTree, bindingTree,
                                                        stateTree.get([]),
                                                        lastState, [], address)
 
-    // Update the signals.
+    // Update the signals
     const localSignals = signalTree.get(minSignals.address)
     const newSignals = mergeSignals(minSignals.modelNode, minSignals.address,
                                     minSignals.diff, localSignals, stateCallers)
     signalTree.set(minSignals.address, newSignals)
 
-    // Update the components.
+    // Update the components
     const minUpdateBindings = bindingTree.get(minUpdate.address)
     const minUpdateEl = minUpdateBindings.data
     const minUpdateState = stateTree.get(minUpdate.address)
     const newBindings = updateComponents(minUpdate.address, minUpdate.modelNode,
                                          minUpdateState, minUpdate.diff,
-                                         minUpdateBindings, minUpdateEl,
+                                         minUpdateBindings,
+                                         { relTop: minUpdateEl }, [ 'relTop' ],
                                          stateCallers, opts)
     bindingTree.set(minUpdate.address, newBindings)
   }
@@ -1402,11 +1414,6 @@ export function run (component, appEl, opts = {}) {
 // DOM
 // -------------------------------------------------------------------
 
-// constants
-export const BINDING = '@TINIER_BINDING'
-export const ELEMENT = '@TINIER_ELEMENT'
-const LISTENER_OBJECT = '@TINIER_LISTENERS'
-
 function reverseObject (obj) {
   const newObj = {}
   for (let k in obj) {
@@ -1455,87 +1462,6 @@ function keyBy (arr, key) {
   return obj
 }
 
-/**
- *
- */
-export function addressToObj (address, val) {
-  // If address is []
-  if (isUndefined(address[0])) {
-    return val
-  }
-  const f = address[0]
-  if (isString(f)) {
-    return { [f]: addressToObj(address.slice(1), val) }
-  } else {
-    const ar = Array(f + 1)
-    ar[f] = addressToObj(address.slice(1), val)
-    return ar
-  }
-}
-
-/**
- *
- */
-function objectForBindingsArray (bindings) {
-  // Check arrays and find longest internal array.
-  let longest = 0
-  for (let j = 0, l = bindings.length; j < l; j++) {
-    const binding = bindings[j]
-    if (!isArray(binding)) {
-      throw Error('Incompatible bindings: mix of types')
-    }
-    const len = binding.length
-    if (len > longest) {
-      longest = len
-    }
-  }
-  const acc = []
-  for (let i = 0; i < longest; i++) {
-    for (let j = 0, l = bindings.length; j < l; j++) {
-      const binding = bindings[j]
-      if (binding[i] != null) { // not null or undefined
-        if (acc[i] != null) { // not null or undefined
-          acc[i] = objectForBindings([ binding[i], acc[i] ])
-        } else {
-          acc[i] = binding[i]
-        }
-      }
-    }
-  }
-  return acc
-}
-
-/**
- *
- */
-function objectForBindingsObject (bindings) {
-  return bindings.reduce((acc, binding) => {
-    if (isArray(binding))
-      throw Error('Incompatible bindings: mix of types')
-    for (let k in binding) {
-      if (binding[k]) {
-        if (acc[k]) {
-          acc[k] = objectForBindings([ binding[k], acc[k] ])
-        } else {
-          acc[k] = binding[k]
-        }
-      }
-    }
-    return acc
-  }, {})
-}
-
-/**
- * Process object returned by tinier.render.
- * @param bindings -
- * @return
- */
-export function objectForBindings (bindings) {
-  return isArray(bindings[0]) ?
-    objectForBindingsArray(bindings) :
-    objectForBindingsObject(bindings)
-}
-
 // Make sure default is null so undefined type constant do not match
 const isTinierBinding = obj => checkType(BINDING, obj)
 const isTinierElement = obj => checkType(ELEMENT, obj)
@@ -1575,13 +1501,11 @@ export function createElement (tagName, attributesIn, ...children) {
 
 /**
  * Create a new TinierDOM binding.
- * @param {Array|String|Number} addressIn - An address array, or single key or
- *                                          index.
- * @return {Object} A TinierDOM binding.
+ * @param {Array|String|Number} address - An address array, single key, or index
+ * @return {Object} A TinierDOM binding
  */
-export function bind (addressIn) {
-  const address = isArray(addressIn) ? addressIn : [ addressIn ]
-  return tagType(BINDING, { address })
+export function bind (address) {
+  return { type: BINDING, data: address }
 }
 
 function explicitNamespace (name) {
@@ -1769,9 +1693,9 @@ function removeExtraNodes (container, length) {
  *                              the renedered element tree.
  * @param {...[Object|String]|Object|String} tinierElementsAr -
  *   Any number of TinierDOM elements or strings that will be rendered.
- * @return {Object} A nested data structure of bindings for use in Tinier.
+ * @return {Array} An array of bindings.
  */
-export function render (container, ...tinierElementsAr) {
+export function renderRecurse (container, ...tinierElementsAr) {
   // check arguments
   if (!isElement(container)) {
     throw new Error('First argument must be a DOM Element.')
@@ -1785,15 +1709,15 @@ export function render (container, ...tinierElementsAr) {
       throw new Error('A binding cannot have siblings in TinierDOM. ' +
                       'At binding: [ ' + first.address.join(', ') + ' ].')
     }
-    return objectForBindings([ addressToObj(first.address, container) ])
+    return [ [ first.data, container ] ]
   }
 
   // get the children with IDs
   const childrenWithKeys = Array.from(container.children).filter(c => c.id)
   const elementsByID = keyBy(childrenWithKeys, 'id')
 
-  // render each element
-  const bindingsAr = tinierElements.map((tinierEl, i) => {
+  // Render each element
+  const bindings = tinierElements.map((tinierEl, i) => {
     // If an element if a binding, then there can only be one child.
     if (isUndefined(tinierEl)) {
       // cannot be undefined
@@ -1813,8 +1737,8 @@ export function render (container, ...tinierElementsAr) {
           // if match and el is undefined, then append the element
           container.appendChild(movedEl)
         }
-        // then render children
-        return render(movedEl, ...tinierEl.children)
+        // Then render children
+        return renderRecurse(movedEl, ...tinierEl.children)
       } else if (el) {
         // both defined, check type and id
         if (el.tagName && el.tagName.toLowerCase() ===
@@ -1824,23 +1748,23 @@ export function render (container, ...tinierElementsAr) {
           const elToUpdate = el.id ? el.cloneNode(true) : el
           updateDOMElement(elToUpdate, tinierEl)
           if (el.id) container.replaceChild(elToUpdate, el)
-          return render(elToUpdate, ...tinierEl.children)
+          return renderRecurse(elToUpdate, ...tinierEl.children)
         } else {
           // not a matching tag, then replace the element with a new one
           const newEl = createDOMElement(tinierEl, container)
           container.replaceChild(newEl, el)
-          return render(newEl, ...tinierEl.children)
+          return renderRecurse(newEl, ...tinierEl.children)
         }
       } else {
         // no el and no ID match, then add a new Element or string node
         const newEl2 = createDOMElement(tinierEl, container)
         container.appendChild(newEl2)
-        return render(newEl2, ...tinierEl.children)
+        return renderRecurse(newEl2, ...tinierEl.children)
       }
       // There should not be any bindings here
     } else if (isTinierBinding(tinierEl)) {
       throw new Error('A binding cannot have siblings in TinierDOM. ' +
-                      'At binding: [ ' + tinierEl.address.join(', ') + ' ].')
+                      'At binding: [ ' + tinierEl.data + ' ].')
     } else {
       const el = container.childNodes[i]
       const s = String(tinierEl)
@@ -1855,21 +1779,33 @@ export function render (container, ...tinierElementsAr) {
         // If no existing node, then add a new one.
         container.appendChild(document.createTextNode(s))
       }
-      // No binding here.
+      // No binding here. TODO test for this case
       return null
     }
-  })
+  }).reduce((acc, val) => [ ...acc, ...val ], [])
 
   // remove extra nodes
   // TODO This should not run if the child is a binding. Make a test for
   // this. When else should it not run?
   removeExtraNodes(container, tinierElements.length)
 
-  // bindings array to object
-  return objectForBindings(bindingsAr.filter(b => b !== null))
+  return bindings.filter(x => x !== null)
 }
 
-// export API
+/**
+ * Render the given element tree into the container.
+ * @param {Element} container - A DOM element that will be the container for
+ *                              the renedered element tree.
+ * @param {...[Object|String]|Object|String} tinierElementsAr -
+ *   Any number of TinierDOM elements or strings that will be rendered.
+ * @return {Object} A bindings object.
+ */
+export function render (container, ...tinierElementsAr) {
+  const bindingsAr = renderRecurse(container, ...tinierElementsAr)
+  return { type: BINDINGS, data: bindingsAr }
+}
+
+// Export API
 export default {
   arrayOf, objectOf, createComponent, run, bind, createElement, render,
 }
