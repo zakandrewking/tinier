@@ -1,7 +1,5 @@
 /** @module tinier */
 
-import * as id from 'incremental-dom'
-
 // constants
 export const ARRAY_OF    = '@TINIER_ARRAY_OF'
 export const OBJECT_OF   = '@TINIER_OBJECT_OF'
@@ -402,9 +400,9 @@ export function updateEl (address, component, state, diffVal, lastRenderedEl,
     }
 
     // These need to be asynchronous
-    if (diffVal === CREATE) {
+    if (diffVal === CREATE && component.didMount !== noop) {
       defer(() => component.didMount(arg))
-    } else if (shouldUpdate) {
+    } else if (shouldUpdate && component.didUpdate !== noop) {
       defer(() => component.didUpdate(arg))
     }
 
@@ -414,21 +412,6 @@ export function updateEl (address, component, state, diffVal, lastRenderedEl,
       lastRenderedEl: shouldUpdate ? el : lastRenderedEl
     }
   }
-}
-
-const match_dropNodes = {
-  [NODE]: node => node.data,
-  [OBJECT]: obj => mapValues(obj, dropNodes),
-  [ARRAY]: ar => ar.map(dropNodes),
-  [NULL]: () => null,
-}
-
-/**
- * For a tree, return everything down to the first set of NODES with data for
- * leaves.
- */
-function dropNodes (tree) {
-  return match(tree, match_dropNodes)
 }
 
 /**
@@ -454,21 +437,23 @@ function updateComponents (address, node, state, diff, bindings, renderResult,
     const b = k !== null ? get(bindings, k) : bindings
 
     // Get binding el
-    const el = renderResult[makeBindingKey(newRelativeAddress)]
+    const lastRenderedEl = get(b, 'data')
+    const el = renderResult !== null
+          ? renderResult[makeBindingKey(newRelativeAddress)]
+          : lastRenderedEl
 
     // Update the component. If DESTROY, then there will not be a binding.
-    const res = updateEl(newAddress, component, s, d.data, get(b, 'data'), el,
+    const res = updateEl(newAddress, component, s, d.data, lastRenderedEl, el,
                          stateCallers, opts)
     // Fall back on old bindings.
     const nextRenderResult = res.renderResult !== null
           ? res.renderResult
-          : dropNodes(get(b, 'children'))
-    const data = res.lastRenderedEl
-    // update children
+          : null
+    // Update children
     const children = updateComponents(newAddress, component.model, s,
                                       d.children, get(b, 'children'),
                                       nextRenderResult, [], stateCallers, opts)
-    return tagType(NODE, { data, children })
+    return tagType(NODE, { data: el, children })
   }
   const recurse = (n, k) => {
     return updateComponents(addressWith(address, k), n, get(state, k), diff[k],
@@ -1099,7 +1084,7 @@ function patchInitNoArg (init) {
     if (args.length === 0) {
       return init({})
     } else if (args.length > 1 || !isObject(args[0])) {
-      throw new Error('Reducers can only take 1 or 0 arguments, and the ' +
+      throw new Error('Init function can only take 1 or 0 arguments, and the ' +
                       'argument should be an object.')
     } else {
       return init(args[0])
@@ -1664,7 +1649,7 @@ export function updateDOMElement (el, tinierEl) {
       .map(a => el.style.removeProperty(a))
   }
 
-  // call the callback
+  // Call the callback
   if (thenFn) {
     defer(() => thenFn(el))
   }

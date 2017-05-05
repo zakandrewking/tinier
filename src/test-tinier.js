@@ -1218,6 +1218,34 @@ describe('createComponent/run', () => {
     assert.strictEqual(newEl.id, 'new')
     assert.strictEqual(newEl.textContent, '')
   })
+
+  it('handles re-rendering on an element with children', () => {
+    // Catches a bug where the old bindings of child array were not being stored
+    // correctly
+    const Child = createComponent({
+      displayName: 'Child',
+      render: ({ state }) => <div>{ state.i }</div>,
+    })
+    const Component = createComponent({
+      displayName: 'Component',
+      model: { children: arrayOf(Child) },
+      init: () => ({ children: [ { i: 0 }, { i: 1 } ] }),
+      reducers: { test: ({ n, state }) => ({ ...state, n }) },
+      render: ({ state }) => {
+        const children = state.children.map((_, i) => {
+          return <div>{ bind([ 'children', i ]) }</div>
+        })
+        return <div>{ children }</div>
+      },
+      // Make runAndProcessRender return null by returning false from
+      // shouldUpdate
+      shouldUpdate: ({ state }) => state.n !== 2,
+    })
+    // Run
+    const { reducers } = run(Component, el)
+    // Render with shouldUpdate = false
+    reducers.test({ n: 2 })
+  })
 })
 
 // -------------------------------------------------------------------

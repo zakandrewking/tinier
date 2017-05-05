@@ -186,3 +186,21 @@ Arguments as `args` object:
 - *model*:
 - *init*: (Object) => Object, Default
 - *signalNames*: `[String]`, default `[]` - A list of signal names as strings.
+
+### `tinier.run(component, element, options={})`
+
+- *component*: A Tinier component.
+- *element*: A DOM element that the component will be rendered in.
+- *options*: An object that can include any of the following attributes:
+  - *initialState*: Then initial state for the component.
+  - *verbose*: (Boolean) If true, then print extra warning messages and log all
+    state changes.
+
+Returns an object containing the run API:
+
+- *setState*:
+- *setStateNoRender*:
+- *getState*:
+- *reducers*:
+- *methods*:
+- *signals*:
