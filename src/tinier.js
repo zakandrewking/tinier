@@ -242,18 +242,21 @@ export function checkType (type, obj) {
  *                               found. Takes `object` as a single argument.
  * @return {*} Return value from the called function.
  */
-export function match (object, fns, defaultFn = throwUnrecognizedType) {
+export function match (object, fns, defaultFn = null, ...args) {
+  if (defaultFn === null) {
+    defaultFn = throwUnrecognizedType
+  }
   for (let key in fns) {
     if ((key === NULL   && object === null ) ||
         (key === ARRAY  && isArray(object) ) ||
         (isObject(object) && checkType(key, object))) {
-      return fns[key](object)
+      return fns[key](object, ...args)
     }
   }
   if (OBJECT in fns && isObject(object)) {
-    return fns[OBJECT](object)
+    return fns[OBJECT](object, ...args)
   }
-  return defaultFn(object)
+  return defaultFn(object, ...args)
 }
 
 function throwUnrecognizedType (node) {
@@ -264,10 +267,6 @@ function throwUnrecognizedType (node) {
 // Update components
 // -------------------------------------------------------------------
 
-// TODO use this approach for all match operations, to avoid redefining
-// functions every time. This will mean match needs to accept more arguments to
-// pass into these functions. Or, just use if/then statements; is there really
-// any advantage to match()?
 const match_hasChildren = {
   [ARRAY_OF]: () => true,
   [OBJECT_OF]: () => true,
@@ -355,6 +354,8 @@ function runAndProcessRender (shouldUpdate, component, arg) {
 export function updateEl (address, component, state, diffVal, lastRenderedEl,
                           el, stateCallers, opts) {
   // The object passed to lifecycle functions
+
+  // TODO running these every time is inefficient
   const reducers = patchReducersWithState(address, component, stateCallers.callReducer)
   const signals = patchSignals(address, component, stateCallers.callSignal)
   const methods = patchMethods(address, component, stateCallers.callMethod,
@@ -414,6 +415,20 @@ export function updateEl (address, component, state, diffVal, lastRenderedEl,
   }
 }
 
+const match_updateComponents = {
+  [OBJECT_OF]: (objOf, diff, state, updateRecurse) => {
+    return mapValues(zipObjects([ diff, state ]), updateRecurse)
+  },
+  [ARRAY_OF]: (arOf, diff, state, updateRecurse) => {
+    return zipArrays([ diff, state ]).map(updateRecurse)
+  },
+  [COMPONENT]: (component, diff, state, updateRecurse) => {
+    return updateRecurse([ diff, state ], null)
+  },
+  [ARRAY]: (ar, _, __, ___, recurse) => ar.map(recurse),
+  [OBJECT]: (obj, _, __, ___, recurse) => mapValues(obj, recurse),
+}
+
 /**
  * Run create, update, and destroy for component.
  * @param {Array} address - The location of the component in the state.
@@ -426,6 +441,7 @@ export function updateEl (address, component, state, diffVal, lastRenderedEl,
  */
 function updateComponents (address, node, state, diff, bindings, renderResult,
                            relativeAddress, stateCallers, opts) {
+  // TODO pull these out to top level
   const updateRecurse = ([ d, s ], k) => {
     // TODO in updateRecurse functions where k can be null, there must be a
     // nicer way to organize things with fewer null checks
@@ -455,24 +471,16 @@ function updateComponents (address, node, state, diff, bindings, renderResult,
                                       nextRenderResult, [], stateCallers, opts)
     return tagType(NODE, { data: el, children })
   }
+
+  // TODO pull these out to top level
   const recurse = (n, k) => {
     return updateComponents(addressWith(address, k), n, get(state, k), diff[k],
                             get(bindings, k), renderResult,
                             addressWith(relativeAddress, k), stateCallers, opts)
   }
-  return match(
-    node,
-    {
-      [OBJECT_OF]: objOf => {
-        return mapValues(zipObjects([ diff, state ]), updateRecurse)
-      },
-      [ARRAY_OF]: arOf => {
-        return zipArrays([ diff, state ]).map(updateRecurse)
-      },
-      [COMPONENT]: component => updateRecurse([ diff, state ], null),
-      [ARRAY]: ar => ar.map(recurse),
-      [OBJECT]: obj => mapValues(obj, recurse),
-    })
+
+  return match(node, match_updateComponents, null, diff, state, updateRecurse,
+               recurse)
 }
 
 // -------------------------------------------------------------------
@@ -561,6 +569,44 @@ export function makeTree (init, mutable) {
   }
 }
 
+const match_checkState = {
+  [OBJECT_OF]: (objOf, newState, modelNode) => {
+    if (!isObject(newState) || isArray(newState)) {
+      throw new Error('Shape of the new state does not match the model. ' +
+                      'Model: ' + objOf + '  State: ' + newState)
+    } else {
+      mapValues(newState, s => checkState(modelNode.component.model, s))
+    }
+  },
+  [ARRAY_OF]: (arOf, newState, modelNode) => {
+    if (!isArray(newState)) {
+      throw new Error('Shape of the new state does not match the model.' +
+                      'Model: ' + arOf + '  State: ' + newState)
+    } else {
+      newState.map(s => checkState(modelNode.component.model, s))
+    }
+  },
+  [COMPONENT]: (component, newState, modelNode) => {
+    checkState(modelNode.model, newState)
+  },
+  [ARRAY]: (ar, newState, modelNode) => {
+    if (!isArray(newState)) {
+      throw new Error('Shape of the new state does not match the model.' +
+                      'Model: ' + ar + '  State: ' + newState)
+    } else {
+      ar.map((a, i) => checkState(a, get(newState, i)))
+    }
+  },
+  [OBJECT]: (obj, newState, modelNode) => {
+    if (!isObject(newState) || isArray(newState)) {
+      throw new Error('Shape of the new state does not match the model. ' +
+                      'Model: ' + obj + '  State: ' + newState)
+    } else {
+      mapValues(obj, (o, k) => checkState(o, get(newState, k)))
+    }
+  },
+}
+
 /**
  * Check that the new state is valid. If not, then throw an Error.
  * @param {Object} modelNode - A model or a node of a model.
@@ -570,43 +616,7 @@ export function checkState (modelNode, newState) {
   if (newState === null) {
     return
   }
-  match(modelNode, {
-    [OBJECT_OF]: objOf => {
-      if (!isObject(newState) || isArray(newState)) {
-        throw new Error('Shape of the new state does not match the model. ' +
-                        'Model: ' + objOf + '  State: ' + newState)
-      } else {
-        mapValues(newState, s => checkState(modelNode.component.model, s))
-      }
-    },
-    [ARRAY_OF]: arOf => {
-      if (!isArray(newState)) {
-        throw new Error('Shape of the new state does not match the model.' +
-                        'Model: ' + arOf + '  State: ' + newState)
-      } else {
-        newState.map(s => checkState(modelNode.component.model, s))
-      }
-    },
-    [COMPONENT]: component => {
-      checkState(modelNode.model, newState)
-    },
-    [ARRAY]: ar => {
-      if (!isArray(newState)) {
-        throw new Error('Shape of the new state does not match the model.' +
-                        'Model: ' + ar + '  State: ' + newState)
-      } else {
-        ar.map((a, i) => checkState(a, get(newState, i)))
-      }
-    },
-    [OBJECT]: obj => {
-      if (!isObject(newState) || isArray(newState)) {
-        throw new Error('Shape of the new state does not match the model. ' +
-                        'Model: ' + obj + '  State: ' + newState)
-      } else {
-        mapValues(obj, (o, k) => checkState(o, get(newState, k)))
-      }
-    },
-  })
+  match(modelNode, match_checkState, null, newState, modelNode)
 }
 
 function computeDiffValue (state, lastState, key, isValidFn, shouldUpdate,
@@ -631,74 +641,75 @@ function computeDiffValue (state, lastState, key, isValidFn, shouldUpdate,
   }
 }
 
+const match_diffWithModel = {
+  [OBJECT_OF]: (objOf, modelNode, state, lastState, address, triggeringAddress) => {
+    const isValidFn = (obj, k) => {
+      return isObject(obj) && k in obj && obj[k] !== null
+    }
+    const l = Object.assign({}, state || {}, lastState || {})
+    return mapValues(l, function (_, k) {
+      const data = computeDiffValue(state, lastState, k, isValidFn,
+                                    objOf.component.shouldUpdate,
+                                    addressWith(address, k),
+                                    triggeringAddress)
+      const children = diffWithModel(objOf.component.model,
+                                     get(state, k),
+                                     get(lastState, k),
+                                     addressWith(address, k),
+                                     triggeringAddress)
+      return tagType(NODE, { data, children })
+    })
+  },
+  [ARRAY_OF]: (arOf, modelNode, state, lastState, address, triggeringAddress) => {
+    const isValidFn = (obj, i) => {
+      return isArray(obj) && i < obj.length && obj[i] !== null
+    }
+    const longest = Math.max(isArray(state) ? state.length : 0,
+                             isArray(lastState) ? lastState.length : 0)
+    const l = Array.apply(null, { length: longest })
+    return l.map(function (_, i) {
+      const data = computeDiffValue(state, lastState, i, isValidFn,
+                                    arOf.component.shouldUpdate,
+                                    addressWith(address, i), triggeringAddress)
+      const children = diffWithModel(arOf.component.model,
+                                     get(state, i),
+                                     get(lastState, i),
+                                     addressWith(address, i),
+                                     triggeringAddress)
+      return tagType(NODE, { data, children })
+    })
+  },
+  [COMPONENT]: (component, modelNode, state, lastState, address, triggeringAddress) => {
+    const isValidFn = (obj, _) => obj !== null
+    const data = computeDiffValue(state, lastState, null, isValidFn,
+                                  component.shouldUpdate,
+                                  address, triggeringAddress)
+    const children = diffWithModel(component.model, state || null,
+                                   lastState || null, address,
+                                   triggeringAddress)
+    return tagType(NODE, { data, children })
+  },
+  [ARRAY]: (ar, modelNode, state, lastState, address, triggeringAddress) => {
+    return ar.map((n, i) => {
+      return diffWithModel(n, get(state, i), get(lastState, i),
+                           addressWith(address, i), triggeringAddress)
+    })
+  },
+  [OBJECT]: (obj, modelNode, state, lastState, address, triggeringAddress) => {
+    return mapValues(obj, (n, k) => {
+      return diffWithModel(n, get(state, k), get(lastState, k),
+                           addressWith(address, k), triggeringAddress)
+    })
+  },
+}
+
 /**
  * Compute the full diff tree for the model node. Calls shouldUpdate.
  */
 function diffWithModel (modelNode, state, lastState, address,
                         triggeringAddress) {
-  return match(
-    modelNode,
-    {
-      [OBJECT_OF]: objOf => {
-        const isValidFn = (obj, k) => {
-          return isObject(obj) && k in obj && obj[k] !== null
-        }
-        const l = Object.assign({}, state || {}, lastState || {})
-        return mapValues(l, function (_, k) {
-          const data = computeDiffValue(state, lastState, k, isValidFn,
-                                        objOf.component.shouldUpdate,
-                                        addressWith(address, k),
-                                        triggeringAddress)
-          const children = diffWithModel(objOf.component.model,
-                                         get(state, k),
-                                         get(lastState, k),
-                                         addressWith(address, k),
-                                         triggeringAddress)
-          return tagType(NODE, { data, children })
-        })
-      },
-      [ARRAY_OF]: arOf => {
-        const isValidFn = (obj, i) => {
-          return isArray(obj) && i < obj.length && obj[i] !== null
-        }
-        const longest = Math.max(isArray(state) ? state.length : 0,
-                                 isArray(lastState) ? lastState.length : 0)
-        const l = Array.apply(null, { length: longest })
-        return l.map(function (_, i) {
-          const data = computeDiffValue(state, lastState, i, isValidFn,
-                                        arOf.component.shouldUpdate,
-                                        addressWith(address, i), triggeringAddress)
-          const children = diffWithModel(arOf.component.model,
-                                         get(state, i),
-                                         get(lastState, i),
-                                         addressWith(address, i),
-                                         triggeringAddress)
-          return tagType(NODE, { data, children })
-        })
-      },
-      [COMPONENT]: component => {
-        const isValidFn = (obj, _) => obj !== null
-        const data = computeDiffValue(state, lastState, null, isValidFn,
-                                      component.shouldUpdate,
-                                      address, triggeringAddress)
-        const children = diffWithModel(component.model, state || null,
-                                       lastState || null, address,
-                                       triggeringAddress)
-        return tagType(NODE, { data, children })
-      },
-      [ARRAY]: ar => {
-        return ar.map((n, i) => {
-          return diffWithModel(n, get(state, i), get(lastState, i),
-                               addressWith(address, i), triggeringAddress)
-        })
-      },
-      [OBJECT]: obj => {
-        return mapValues(obj, (n, k) => {
-          return diffWithModel(n, get(state, k), get(lastState, k),
-                               addressWith(address, k), triggeringAddress)
-        })
-      },
-    })
+  return match(modelNode, match_diffWithModel, null, modelNode, state,
+               lastState, address, triggeringAddress)
 }
 
 /**
@@ -872,6 +883,20 @@ export function makeChildSignalsAPI (model) {
   return match(model, match_makeChildSignalsAPI, constant(null))
 }
 
+const match_reduceChildren = {
+  [NODE]: (node, fn, init, address) => fn(init, node.data, address),
+  [ARRAY]: (ar, fn, init, address) => {
+    return ar.reduce((accum, n, k) => {
+      return reduceChildren(n, fn, accum, addressWith(address, k))
+    }, init)
+  },
+  [OBJECT]: (obj, fn, init, address) => {
+    return reduceValues(obj, (accum, n, k) => {
+      return reduceChildren(n, fn, accum, addressWith(address, k))
+    }, init)
+  },
+}
+
 /**
  * Reduce the direct children of the tree.
  * @param {Object} node - A node in a tree.
@@ -881,19 +906,7 @@ export function makeChildSignalsAPI (model) {
  * @return {*}
  */
 export function reduceChildren (node, fn, init, address = []) {
-  return match(node, {
-    [NODE]: node => fn(init, node.data, address),
-    [ARRAY]: ar => {
-      return ar.reduce((accum, n, k) => {
-        return reduceChildren(n, fn, accum, addressWith(address, k))
-      }, init)
-    },
-    [OBJECT]: obj => {
-      return reduceValues(obj, (accum, n, k) => {
-        return reduceChildren(n, fn, accum, addressWith(address, k))
-      }, init)
-    },
-  }, constant(init))
+  return match(node, match_reduceChildren, constant(init), fn, init, address)
 }
 
 /**
@@ -921,6 +934,24 @@ function runSignalSetup (component, address, stateCallers) {
   return { signalsAPI, childSignalsAPI }
 }
 
+const match_mergeSignals = {
+  [OBJECT_OF]: (objOf, diffNode, signalNode, updateRecurse) => {
+    return filterValues(mapValues(zipObjects([ diffNode, signalNode ]), updateRecurse), notNull)
+  },
+  [ARRAY_OF]: (arOf, diffNode, signalNode, updateRecurse) => {
+    return zipArrays([ diffNode, signalNode ]).map(updateRecurse).filter(notNull)
+  },
+  [COMPONENT]: (component, diffNode, signalNode, updateRecurse) => {
+    return updateRecurse([ diffNode, signalNode ], null)
+  },
+  [ARRAY]: (ar, diffNode, signalNode, _, upChild, recurse) => {
+    return zipArrays([ ar, diffNode, signalNode, upChild ]).map(recurse)
+  },
+  [OBJECT]: (obj, diffNode, signalNode, _, upChild, recurse) => {
+    return mapValues(zipObjects([ obj, diffNode, signalNode, upChild ]), recurse)
+  },
+}
+
 /**
  * Merge a signals object with signal callbacks from signalSetup.
  * @param {Object} node - A model node.
@@ -937,6 +968,8 @@ function runSignalSetup (component, address, stateCallers) {
  */
 export function mergeSignals (node, address, diffNode, signalNode, stateCallers,
                               upChild = null, upAddress = null) {
+
+  // TODO pull these out to top level
   const updateRecurse = ([ d, s ], k) => {
     const component = k !== null ? node.component : node
     const newAddress = k !== null ? addressWith(address, k) : address
@@ -983,7 +1016,7 @@ export function mergeSignals (node, address, diffNode, signalNode, stateCallers,
       // In the case of destroy, this leaf in the signals object will be null.
       return null
     } else {
-      // update
+      // Update
       const { hasCreated, destroyed } = reduceChildren(
         d.children, (accum, diffVal, address) => {
           const hasCreated = accum.hasCreated || diffVal === CREATE
@@ -994,9 +1027,9 @@ export function mergeSignals (node, address, diffNode, signalNode, stateCallers,
         }, { hasCreated: false, destroyed: [] }
       )
 
-      // if there are deleted children, delete references to them
+      // If there are deleted children, delete references to them
       destroyed.map(childAddress => {
-        // get the right child within childSignalsAPI
+        // Get the right child within childSignalsAPI
         const childSignalsAPINode = childAddress.reduce((accum, k, i) => {
           if (k in accum) {
             return accum[k]
@@ -1008,7 +1041,7 @@ export function mergeSignals (node, address, diffNode, signalNode, stateCallers,
           }
         }, s.data.childSignalsAPI)
         mapValues(childSignalsAPINode, obj => {
-          // remove the matching callFns
+          // Remove the matching callFns
           obj._callFns = obj._callFns.filter(({ address }) => {
             return !addressEqual(address, childAddress)
           })
@@ -1024,23 +1057,15 @@ export function mergeSignals (node, address, diffNode, signalNode, stateCallers,
     }
   }
 
+  // TODO pull these out to top level
   const recurse = ([ n, d, s, u ], k) => {
     const newAddress = addressWith(address, k)
     const newUpAddress = upAddress === null ? null : addressWith(upAddress, k)
     return mergeSignals(n, newAddress, d, s, stateCallers, u, newUpAddress)
   }
 
-  return match(node, {
-    [OBJECT_OF]: objOf => {
-      return filterValues(mapValues(zipObjects([ diffNode, signalNode ]), updateRecurse), notNull)
-    },
-    [ARRAY_OF]: arOf => {
-      return zipArrays([ diffNode, signalNode ]).map(updateRecurse).filter(notNull)
-    },
-    [COMPONENT]: component => updateRecurse([ diffNode, signalNode ], null),
-    [ARRAY]: ar => zipArrays([ ar, diffNode, signalNode, upChild ]).map(recurse),
-    [OBJECT]: obj => mapValues(zipObjects([ obj, diffNode, signalNode, upChild ]), recurse),
-  }, constant(null))
+  return match(node, match_mergeSignals, constant(null), diffNode, signalNode,
+               updateRecurse, upChild, recurse)
 }
 
 // -------------------------------------------------------------------
@@ -1365,8 +1390,7 @@ export function run (component, appEl, opts = {}) {
   const stateCallers = makeStateCallers(component, stateTree, bindingTree,
                                         signalTree, opts)
 
-  // make sure initial state is valid
-  // TODO LEFT OFF ... does this work?
+  // Make sure initial state is valid
   // Q: Does the state for a child component need to be defined? Are we checking
   // all the way down the line?
   const initialState = ('initialState' in opts ? opts.initialState :

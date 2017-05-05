@@ -271,6 +271,21 @@ describe('match', () => {
     }, () => 10)
     assert.strictEqual(result, 10)
   })
+
+  it('takes extra args', () => {
+    const m = {
+      [NULL]: (_, { data }) => data
+    }
+    const result = match(null, m, null, { data: 10 })
+    assert.strictEqual(result, 10)
+  })
+
+  it('default with extra args', () => {
+    const m = {}
+    assert.throws(() => {
+      match(null, m, null, { data: 10 })
+    }, /Unrecognized type in pattern matching/)
+  })
 })
 
 // describe('interfaces', () => {
