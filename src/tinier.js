@@ -355,7 +355,9 @@ export function updateEl (address, component, state, diffVal, lastRenderedEl,
                           el, stateCallers, opts) {
   // The object passed to lifecycle functions
 
-  // TODO running these every time is inefficient
+  // TODO running these every time is inefficient. Replace lastRenderedEl with
+  // lastRenderData, and store any calculated quantities (el, reducers, signals,
+  // methods). When to trash the cache?
   const reducers = patchReducersWithState(address, component, stateCallers.callReducer)
   const signals = patchSignals(address, component, stateCallers.callSignal)
   const methods = patchMethods(address, component, stateCallers.callMethod,
@@ -1712,12 +1714,10 @@ export function renderRecurse (container, ...tinierElementsAr) {
 
   const tinierElements = flattenElementsAr(tinierElementsAr)
 
+  // If it's just a binding, then return that. Otherwise, continue to
+  // automatically create a div or g below.
   const first = get(tinierElements, 0)
-  if (isTinierBinding(first)) {
-    if (tinierElements.length !== 1) {
-      throw new Error('A binding cannot have siblings in TinierDOM. ' +
-                      'At binding: [ ' + first.address.join(', ') + ' ].')
-    }
+  if (isTinierBinding(first) && tinierElements.length === 1) {
     return [ [ first.data, container ] ]
   }
 
@@ -1729,7 +1729,7 @@ export function renderRecurse (container, ...tinierElementsAr) {
   const bindings = tinierElements.map((tinierEl, i) => {
     // If an element if a binding, then there can only be one child.
     if (isUndefined(tinierEl)) {
-      // cannot be undefined
+      // Cannot be undefined
       throw new Error('Children in Tinier Elements cannot be undefined.')
     } else if (isTinierElement(tinierEl)) {
       // container.childNodes is a live collection, so get the current node at
@@ -1737,22 +1737,22 @@ export function renderRecurse (container, ...tinierElementsAr) {
       const el = container.childNodes[i]
       // tinierEl is a TinierDOM element.
       if (tinierEl.attributes.id in elementsByID) {
-        // el exist, then check for a matching node by ID
+        // If el exist, then check for a matching node by ID
         const movedEl = elementsByID[tinierEl.attributes.id]
         if (el) {
-          // if match and existing el, then replace the element
+          // If match and existing el, then replace the element
           container.replaceChild(movedEl, el)
         } else {
-          // if match and el is undefined, then append the element
+          // If match and el is undefined, then append the element
           container.appendChild(movedEl)
         }
         // Then render children
         return renderRecurse(movedEl, ...tinierEl.children)
       } else if (el) {
-        // both defined, check type and id
-        if (el.tagName && el.tagName.toLowerCase() ===
-            tinierEl.tagName.toLowerCase()) {
-          // matching tag, then update the node to match. Be aware that existing
+        // Both defined, check type and id
+        if (el.tagName
+            && el.tagName.toLowerCase() === tinierEl.tagName.toLowerCase()) {
+          // Matching tag, then update the node to match. Be aware that existing
           // nodes with IDs might get moved, so we should clone them?
           const elToUpdate = el.id ? el.cloneNode(true) : el
           updateDOMElement(elToUpdate, tinierEl)
@@ -1770,10 +1770,13 @@ export function renderRecurse (container, ...tinierElementsAr) {
         container.appendChild(newEl2)
         return renderRecurse(newEl2, ...tinierEl.children)
       }
-      // There should not be any bindings here
     } else if (isTinierBinding(tinierEl)) {
-      throw new Error('A binding cannot have siblings in TinierDOM. ' +
-                      'At binding: [ ' + tinierEl.data + ' ].')
+      // Automatically add a div or g for raw bindings
+      const isSvg = container.namespaceURI === NAMESPACES.svg
+      const newEl = createDOMElement(createElement(isSvg ? 'g' : 'div'),
+                                     container)
+      container.appendChild(newEl)
+      return renderRecurse(newEl, tinierEl)
     } else {
       const el = container.childNodes[i]
       const s = String(tinierEl)

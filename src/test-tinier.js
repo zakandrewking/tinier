@@ -1558,16 +1558,40 @@ describe('render', () => {
     assert.deepEqual(bindings, expect)
   })
 
-  it('returns a bindings object -- sibling', () => {
-    assert.throws(() => {
-      const bindings = render(
-        el,
-        <div>
-          <div></div>
-          { bind([ 'a', 'b' ]) }
-        </div>
-      )
-    }, /A binding cannot have siblings in TinierDOM/)
+  it('returns a bindings object -- sibling with auto div', () => {
+    const bindings = render(
+      el,
+      <div>
+        <div></div>
+        { bind([ 'a', 'b' ]) }
+      </div>
+    )
+    const expect = {
+      type: BINDINGS,
+      data: [
+        [ [ 'a', 'b' ], el.firstChild.children[1] ],
+      ]
+    }
+    assert.deepEqual(bindings, expect)
+    assert.strictEqual(el.firstChild.children[1].tagName.toLowerCase(), 'div')
+  })
+
+  it('returns a bindings object -- sibling with auto g', () => {
+    const bindings = render(
+      el,
+      <svg>
+        <g></g>
+        { bind([ 'a', 'b' ]) }
+      </svg>
+    )
+    const expect = {
+      type: BINDINGS,
+      data: [
+        [ [ 'a', 'b' ], el.firstChild.children[1] ],
+      ]
+    }
+    assert.deepEqual(bindings, expect)
+    assert.strictEqual(el.firstChild.children[1].tagName.toLowerCase(), 'g')
   })
 
   it('accepts lists of nodes', () => {
