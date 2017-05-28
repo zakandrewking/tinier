@@ -58,14 +58,14 @@ const _signals  = { [TOP]: null }
 const defStateCallers = makeStateCallers(_state, _bindings, _signals)
 const DefComponent = createComponent()
 const NestedComponent = createComponent({
-  model: {
+  init: () => ({
     hello: arrayOf(createComponent({
-      model: {
+      init: () => ({
         friend: createComponent(),
         ghost: 'GHOST',
-      }
+      }),
     }))
-  },
+  }),
 })
 
 // tests
@@ -485,7 +485,7 @@ describe('makeTree', () => {
 describe('checkState', () => {
   it('does nothing for a valid state object', () => {
     const Parent = createComponent({
-      model: { child: DefComponent },
+      init: () => ({ child: DefComponent }),
     })
     const model = { a: arrayOf(Parent) }
     const state = { a: [ { child: { x: 10 } } ] }
@@ -494,7 +494,7 @@ describe('checkState', () => {
 
   it('checks for invalid state shape -- object', () => {
     const Parent = createComponent({
-      model: { child: DefComponent },
+      init: () => ({ child: DefComponent }),
     })
     const model = { a: arrayOf(Parent) }
     const state = { a: [ { child: [ 10 ] } ] }
@@ -552,7 +552,7 @@ describe('checkState', () => {
 
 describe('diffWithModelMin', () => {
   it('diffs state by looking at model -- array', () => {
-    const component = createComponent({ model: { a: arrayOf(DefComponent) } })
+    const component = createComponent({ init: () => ({ a: [ DefComponent ] }) })
     const lastState = { a: [ { x: 10 }, { x: 10 } ] }
     const state = { a: [ lastState.a[0], { x: 10 }, { x: 12 } ] }
     const { minSignals, minUpdate } = diffWithModelMin(component, state,
@@ -574,7 +574,7 @@ describe('diffWithModelMin', () => {
   })
 
   it('diffs state by looking at model -- object nested', () => {
-    const Child = createComponent({ model: { a: objectOf(DefComponent) } })
+    const Child = createComponent({ init: () => ({ a: { first: DefComponent } }) })
     const model = { e: Child }
     const oldState = { e: { a: { b: { x: 9 },  c: { x: 10 } } } }
     const newState = { e: { a: { c: { x: 11 }, d: { x: 12 } } } }
@@ -644,7 +644,7 @@ describe('diffWithModelMin', () => {
 
   it('accepts null for old state 2', () => {
     const component = createComponent({
-      model: { child: DefComponent }
+      init: () => ({ child: DefComponent })
     })
     const oldState = null
     const newState = { child: { val: 1 } }
@@ -758,7 +758,7 @@ describe('updateEl', () => {
 
   it('returns binding', () => {
     const component = createComponent({
-      model: ({ c: DefComponent }),
+      init: () => ({ c: DefComponent }),
       render: ({ el }) => ({ type: BINDINGS, data: [ [ 'c', el ] ] }),
     })
     const state = { c: {} }
@@ -770,7 +770,7 @@ describe('updateEl', () => {
 
   it('accepts null for tinierState', () => {
     const component = createComponent({
-      model: ({ c: DefComponent }),
+      init: () => ({ c: DefComponent }),
       render: ({ el }) => ({ type: BINDINGS, data: [ [ 'c', el ] ] }),
     })
     const state = { c: {} }
@@ -888,9 +888,7 @@ describe('makeChildSignalsAPI', () => {
       signalNames: [ 'ribose' ],
     })
     const Parent = createComponent({
-      model: {
-        deoxy: arrayOf(HasSignal)
-      }
+      init: () => ({ deoxy: [ HasSignal ] }),
     })
     const childSignals = makeChildSignalsAPI(Parent.model)
     let watch = ''
@@ -958,7 +956,7 @@ describe('mergeSignals', () => {
     const Parent = createComponent({
       displayName: 'Parent',
 
-      model: { child: arrayOf(Child) },
+      init: () => ({ child: [ Child, Child ] }),
 
       signalNames: [ 'setChild1', 'passThrough' ],
 
@@ -1033,7 +1031,7 @@ describe('mergeSignals', () => {
   })
 
   it('works with null state', () => {
-    const Component = createComponent({ model: { child: DefComponent } })
+    const Component = createComponent({ init: () => ({ child: DefComponent }) })
     const stateTree = makeTree({ child: null }, false)
     const bindingTree = makeTree(null, true)
     const signalTree = makeTree(null, true)
@@ -1048,9 +1046,9 @@ describe('mergeSignals', () => {
 })
 
 describe('createComponent/run', () => {
-  it('errors if the model is a single component', () => {
+  it('errors if init returns a single component', () => {
     assert.throws(() => {
-      createComponent({ model: DefComponent })
+      createComponent({ init: () => DefComponent })
     }, /cannot be another Component/)
   })
 
@@ -1062,6 +1060,13 @@ describe('createComponent/run', () => {
     })
     const { reducers } = run(Component, EL1)
     reducers.a()
+  })
+
+  it('run with options', () => {
+    const Component = createComponent({
+      init: (opt1, opt2) => ({ opt1, opt2 }),
+    })
+    run(Component('x', 'y'), EL1)
   })
 
   it('has setStateNoRender method', () => {
@@ -1171,7 +1176,7 @@ describe('createComponent/run', () => {
 
     const Parent = createComponent({
       displayName: 'Parent',
-      model: { child: Child },
+      init: () => ({ child: Child }),
       signalNames: [ 'add' ],
       signalSetup: ({ signals, childSignals }) => {
         signals.add.on(childSignals.child.add.call)
@@ -1197,8 +1202,7 @@ describe('createComponent/run', () => {
 
     const Parent = createComponent({
       displayName: 'Parent',
-      model: { child: arrayOf(Child) },
-      init: () => ({ child: [ Child.init() ] }),
+      init: () => ({ child: [ Child() ] }),
       signalNames: [ 'increment' ],
       signalSetup: ({ signals, reducers }) => {
         signals.increment.on(reducers.increment)
@@ -1239,12 +1243,12 @@ describe('createComponent/run', () => {
     // correctly
     const Child = createComponent({
       displayName: 'Child',
+      init: (i) => ({ i }),
       render: ({ state }) => <div>{ state.i }</div>,
     })
     const Component = createComponent({
       displayName: 'Component',
-      model: { children: arrayOf(Child) },
-      init: () => ({ children: [ { i: 0 }, { i: 1 } ] }),
+      init: () => ({ children: [ Child(0), Child(1) ] }),
       reducers: { test: ({ n, state }) => ({ ...state, n }) },
       render: ({ state }) => {
         const children = state.children.map((_, i) => {
