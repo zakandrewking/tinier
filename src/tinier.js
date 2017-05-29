@@ -512,62 +512,52 @@ export function addressEqual (a1, a2) {
  * @return {*} - The value at the given address.
  */
 function treeGet (address, tree) {
-  return address.reduce((accum, val) => {
-    return checkType(NODE, accum) ? accum.children[val] : accum[val]
+  return address.reduce((t, k) => {
+    return t.type === INSTANCE ? t.state[k] : t[k]
   }, tree)
 }
 
+function treeSetInner (address, tree, value) {
+  if (address.length === 0) {
+    return value
+  } else {
+    const [ k, rest ] = head(address)
+    return (typeof k === 'string'
+            ? { ...tree, [k]: treeSet(rest, treeGet([ k ], tree), value) }
+            : [ ...tree.slice(0, k), treeSet(rest, treeGet([ k ], tree), value), ...tree.slice(k + 1) ])
+  }
+}
+
 /**
- * Set the value in a tree; immutable.
+ * Set the value in a tree; immutable. When a Component Instance is found, sets
+ * the state attribute rather than replacing the Instance.
  * @param {Array} address -
  * @param {Object} tree -
  * @param {*} value - The new value to set at address.
  * @return (*) The new tree.
  */
 function treeSet (address, tree, value) {
-  if (address.length === 0) {
-    return value
+  if (tree.type === INSTANCE) {
+    // For a Component Instance, set the state attribute
+    const instance = tree
+    instance.state = treeSetInner(address, tree, value)
+    return instance
   } else {
-    const [ k, rest ] = head(address)
-    return (typeof k === 'string' ?
-            { ...tree, [k]: treeSet(rest, treeGet([ k ], tree), value) } :
-            [ ...tree.slice(0, k), treeSet(rest, treeGet([ k ], tree), value),
-              ...tree.slice(k + 1) ])
+    return treeSetInner(address, tree, value)
   }
 }
 
 /**
- * Set the value in a tree; mutable.
- * @param {Array} address -
- * @param {Object} tree -
- * @param {*} value - The new value to set at address.
- * @return (*) The tree.
+ * Create an immutable state tree.
  */
-function treeSetMutable (address, tree, value) {
-  if (address.length === 0) {
-    return value
-  } else {
-    const [ rest, last ] = tail(address)
-    const parent = treeGet(rest, tree)
-    if (checkType(NODE, parent)) {
-      parent.children[last] = value
-    } else {
-      parent[last] = value
-    }
-    return tree
-  }
-}
-
-export function makeTree (init, mutable) {
+export function makeTree (init) {
   let state = init
   return {
     get: (address) => {
       return treeGet(address, state)
     },
     set: (address, value) => {
-      state = mutable ?
-        treeSetMutable(address, state, value) :
-        treeSet(address, state, value)
+      state = treeSet(address, state, value)
     },
   }
 }
@@ -1136,11 +1126,11 @@ function patchSignals (address, component, callSignal) {
  */
 export function patchMethods (address, component, callMethod, reducers, signals) {
   const methods = mapValues(component.methods, method => {
-    return function (arg) {
-      if (typeof Event !== 'undefined' && arg instanceof Event) {
-        callMethod(address, method, signals, methods, reducers, this, arg, {})
+    return function (...args) {
+      if (typeof Event !== 'undefined' && args[0] instanceof Event) {
+        callMethod(address, method, signals, methods, reducers, this, args[0], [])
       } else {
-        callMethod(address, method, signals, methods, reducers, null, null, arg)
+        callMethod(address, method, signals, methods, reducers, null, null, args)
       }
     }
   })
@@ -1157,19 +1147,20 @@ export function makeCallMethod (stateTree, opts) {
    * @param reducers - Patched reducer functions.
    * @param target - The value of this in the called function.
    * @param event - The event at the time of the function call.
-   * @param arg - An argument object.
+   * @param args - User arguments.
    */
-  return (address, method, signals, methods, reducers, target, event, arg) => {
-    // check for uninitialized stateTree
+  return (address, method, signals, methods, reducers, target, event, args) => {
+    // TODO what is the right check here, for initialization? Will it already
+    // have happened in evaluating the component?
     if (stateTree.get([]) === null) {
       throw new Error('Cannot call method before the app is initialized (e.g. ' +
                       'in signalSetup).')
     }
-    // get the local state
+    // Get the local state
     const localState = stateTree.get(address)
     // run the method
-    method({ state: localState, signals, methods, reducers, target, event,
-             ...arg })
+    const props = { state: localState, signals, methods, reducers, target, event }
+    method(props, ...args)
   }
 }
 
@@ -1203,14 +1194,13 @@ function makeCallSignal (signals, opts) {
  *   @param {Object} arg - An argument object.
  *   @param {String} name - The name of the reducer (for logging).
  */
-export function makeCallReducer (stateTree, bindingTree, signalTree,
-                                 stateCallers, opts) {
+export function makeCallReducer (stateTree, stateCallers, opts) {
   return (address, triggeringComponent, reducer, arg, name) => {
     if (!isFunction(reducer)) {
       throw new Error('Reducer ' + name + ' is not a function')
     }
     // Run the reducer, and optionally log the result.
-    const localState = stateTree.get(address)
+    const localState = stateTree.get(address).state
     const newLocalState = reducer({ ...arg, state: localState })
     if (opts.verbose) {
       console.log('Called reducer ' + name + ' for ' +
@@ -1257,17 +1247,15 @@ export function makeCallReducer (stateTree, bindingTree, signalTree,
 /**
  * Return an object with functions callMethod, callSignal, and callReducer.
  * @param {Object} stateTree - The global stateTree.
- * @param {Object} bindingTree - The global bindings.
- * @param {Object} signalTree - The global signalTree.
+ * @param {Object} opts - Options.
  * @return {Object} An object with functions callMethod, callSignal, and
  *                  callReducer.
  */
-export function makeStateCallers (stateTree, bindingTree, signalTree, opts) {
+export function makeStateCallers (stateTree, opts) {
   const stateCallers = {}
   stateCallers.callMethod = makeCallMethod(stateTree, opts)
-  stateCallers.callSignal = makeCallSignal(signalTree, opts)
-  stateCallers.callReducer = makeCallReducer(stateTree, bindingTree, signalTree,
-                                             stateCallers, opts)
+  stateCallers.callSignal = makeCallSignal(stateTree, opts)
+  stateCallers.callReducer = makeCallReducer(stateTree, stateCallers, opts)
   return stateCallers
 }
 
@@ -1286,34 +1274,25 @@ export function run (instance, appEl, opts = {}) {
   if (instance.type === 'COMPONENT') instance = instance()
   const component = instance.component
 
+  // Initialize binding
+  instance.binding = appEl
+
   // Create variables that will store the state for the whole lifetime of the
-  // application. Similar to the redux model.
-  const stateTree = makeTree(null, false)
-  const topBinding = { type: NODE, data: appEl, children: null }
-  const bindingTree = makeTree(topBinding, true)
-  const signalTree = makeTree(null, true)
+  // application.
+  const stateTree = makeTree(instance)
 
-  // Functions that access state, signals, and bindings
-  const stateCallers = makeStateCallers(stateTree, bindingTree, signalTree, opts)
-
-  // First draw
-  const setStateReducer = ({ newState }) => newState
-  const setState = newState => {
-    return stateCallers.callReducer([], instance, setStateReducer,
-                                    { newState }, 'setState')
-  }
-  setState(instance.state)
+  // Functions that access state
+  const stateCallers = makeStateCallers(stateTree, opts)
 
   // Return API
-  const getState = () => stateTree.get([])
   const reducers = patchReducersWithState([], instance, stateCallers.callReducer)
   const signalsCall = patchSignals([], instance, stateCallers.callSignal)
   const methods = patchMethods([], instance, stateCallers.callMethod, reducers,
                                signalsCall)
-  // If state is null, then data will be null
-  const signals = get(signalTree.get([]).data, 'signals')
+  // TODO where does signals get set up?
+  const signals = instance.signals
 
-  return { getState, reducers, methods, signals }
+  return { state: instance, reducers, methods, signals }
 }
 
 // -------------------------------------------------------------------
