@@ -1,37 +1,27 @@
 /* global global */
 
-// public API
-
+// Public API. These are available on the default import.
 import tinier from './tinier'
-const arrayOf = tinier.arrayOf
-const objectOf = tinier.objectOf
-const createComponent = tinier.createComponent
-const run = tinier.run
-const bind = tinier.bind
-const createElement = tinier.createElement
-const render = tinier.render
+const { createComponent, run, bind, createElement, renderDOM } = tinier
 
-// private API
-
+// Private API
 import {
-  ARRAY_OF, OBJECT_OF, COMPONENT, ARRAY, OBJECT, NODE, NULL, TOP, CREATE,
-  UPDATE, DESTROY, noop, tail, head, fromPairs, get, isUndefined, isObject,
-  isArray, isFunction, mapValues, reduceValues, zipArrays, zipObjects,
-  filterValues, any, tagType, checkType, match, hasChildren, makeBindingKey,
-  processBindings, updateEl, addressWith, addressEqual, checkState,
-  diffWithModelMin, makeTree, makeSignal, makeOneSignalAPI, makeChildSignalsAPI,
-  reduceChildren, mergeSignals, makeStateCallers, ELEMENT, BINDING, BINDINGS,
-  addressToObj, createDOMElement, getStyles, updateDOMElement,
+  COMPONENT, ARRAY, OBJECT, NODE, NULL, TOP, CREATE, UPDATE, DESTROY, noop,
+  tail, head, fromPairs, get, isUndefined, isObject, isArray, isFunction,
+  mapValues, reduceValues, zipArrays, zipObjects, filterValues, any, tagType,
+  checkType, match, hasChildren, makeBindingKey, processBindings, updateEl,
+  addressWith, addressEqual, diffTree, treeGet, treeSet,
+  makeSignal, makeOneSignalAPI, makeChildSignalsAPI, reduceChildren,
+  mergeSignals, makeCallMethod, makeCallSignal, makeCallReducer, ELEMENT,
+  BINDING, BINDINGS, createDOMElement, getStyles, updateDOMElement,
 } from './tinier'
 
-// testing functions
-
+// Testing functions
 import { describe, it, afterEach } from 'mocha'
 import { assert } from 'chai'
 import now from 'performance-now'
 
 // DOM setup
-
 import jsdom from 'jsdom'
 const document = jsdom.jsdom()
 const window = document.defaultView
@@ -47,28 +37,23 @@ function mouseClick (el) {
                                            cancelable: true }))
 }
 
-// constants
+//-----------
+// Constants
+//-----------
 
 const EL1 = 'EL1'
 const EL2 = 'EL2'
 const TAG = 'TAG'
-const _state    = { [TOP]: null }
-const _bindings = { [TOP]: null }
-const _signals  = { [TOP]: null }
-const defStateCallers = makeStateCallers(_state, _bindings, _signals)
 const DefComponent = createComponent()
-const NestedComponent = createComponent({
-  init: () => ({
-    hello: arrayOf(createComponent({
-      init: () => ({
-        friend: createComponent(),
-        ghost: 'GHOST',
-      }),
-    }))
-  }),
-})
+const defState = DefComponent()
+const defStateCallers = {}
+defStateCallers.callReducer = makeCallReducer(defState, defStateCallers, {})
+defStateCallers.callMethod = makeCallMethod(defState, {})
+defStateCallers.callSignal = makeCallSignal(defState, {})
 
-// tests
+//-------
+// Tests
+//-------
 
 describe('tail', () => {
   it('gets first element and rest', () => {
@@ -137,11 +122,19 @@ describe('isObject', () => {
     assert.isFalse(isObject(10))
     assert.isFalse(isObject('10'))
   })
+
+  it('false for null', () => {
+    assert.isFalse(isObject(null))
+  })
 })
 
 describe('isArray', () => {
   it('true for array', () => {
     assert.isTrue(isArray([]))
+  })
+
+  it('false for null', () => {
+    assert.isFalse(isArray(null))
   })
 })
 
@@ -212,144 +205,6 @@ describe('any', () => {
   })
 })
 
-describe('tagType', () => {
-  it('returns a new object with the type', () => {
-    assert.deepEqual(tagType('TAG', { a: 10 }), { a: 10, type: 'TAG' })
-  })
-
-  it('checks for invalid tag', () => {
-    assert.throws(() => {
-      tagType({ a: 10 }, { b: 20 })
-    }, 'First argument must be a string')
-  })
-
-  it('checks for object', () => {
-    assert.throws(() => {
-      tagType('TAG', 'TAG')
-    }, 'Second argument must be an object')
-  })
-})
-
-describe('checkType', () => {
-  it('checks for a type tag', () => {
-    assert.isTrue(checkType('TAG', { a: 10, type: 'TAG' }))
-  })
-
-  it('checks for invalid tag', () => {
-    assert.throws(() => {
-      checkType({ a: 10 }, { b: 20 })
-    }, 'First argument must be a string')
-  })
-
-  it('checks for second argument', () => {
-    assert.throws(() => {
-      checkType('TAG')
-    }, 'Bad second argument')
-  })
-})
-
-describe('match', () => {
-  it('tests for tags', () => {
-    const result = match(tagType(OBJECT_OF, { a: 10 }), {
-      [OBJECT_OF]: (node) => node.a,
-    })
-    assert.strictEqual(result, 10)
-  })
-
-  it('uses NULL for null', () => {
-    // LEFTOFF
-    const result = match(null, {
-      [OBJECT_OF]: (node) => node.a,
-      [NULL]: () => null,
-    })
-    assert.isNull(result)
-  })
-
-  it('uses custom default for null', () => {
-    const result = match(null, {
-      [OBJECT_OF]: (node) => node.a,
-    }, () => 10)
-    assert.strictEqual(result, 10)
-  })
-
-  it('takes extra args', () => {
-    const m = {
-      [NULL]: (_, { data }) => data
-    }
-    const result = match(null, m, null, { data: 10 })
-    assert.strictEqual(result, 10)
-  })
-
-  it('default with extra args', () => {
-    const m = {}
-    assert.throws(() => {
-      match(null, m, null, { data: 10 })
-    }, /Unrecognized type in pattern matching/)
-  })
-})
-
-// describe('interfaces', () => {
-//   it('create and check', () => {
-//     const Interface = createInterface({
-//       state: {
-//         a: interfaceTypes.string.default('d1').nullable,
-//         b: interfaceTypes.number.default(3),
-//         c: interfaceTypes.boolean,
-//         d: { e: interfaceTypes.any },
-//         f: [ interfaceTypes.null ],
-//       },
-//       signals: {},
-//       reducerNames: [],
-//     })
-//     const test1 = {
-//       a: null,
-//       b: 4,
-//       c: true,
-//       d: { e: 'aa' },
-//       f: [ null ],
-//     }
-//     assert.isTrue(checkInterfaceType(Interface.state, test1))
-//   })
-
-//   it('defaults must match type', () => {
-//     assert.throws(() => {
-//       interfaceTypes.string.default(1)
-//     })
-//   })
-// })
-
-// describe('checkInterfaceType', () => {
-//   it('compares strings', () => {
-//     assert.isTrue(checkInterfaceType(interfaceTypes.string, 'a'))
-//     assert.isFalse(checkInterfaceType(interfaceTypes.string, 0))
-//     assert.isFalse(checkInterfaceType(interfaceTypes.string, {}))
-//   })
-
-//   it('looks for no argument', () => {
-//     assert.isTrue(checkInterfaceType(interfaceTypes.noArgument, (arg => arg)()))
-//     assert.isFalse(checkInterfaceType(interfaceTypes.noArgument,
-//                                       (arg => arg)(1)))
-//   })
-
-//   it('compares nested types -- object', () => {
-//     const type = { a: interfaceTypes.string, b: interfaceTypes.number }
-//     assert.isTrue(checkInterfaceType(type, { a: '1', b: 1 }))
-//     assert.isFalse(checkInterfaceType(type, { b: '1', a: 1 }))
-//   })
-
-//   it('compares nested types -- array', () => {
-//     const type = [ interfaceTypes.string, { a: interfaceTypes.number } ]
-//     assert.isTrue(checkInterfaceType(type, [ '1', { a: 1 } ]))
-//     assert.isFalse(checkInterfaceType(type, [ '1', { a: 1 }, 2 ]))
-//   })
-
-//   it('accepts any', () => {
-//     assert.isTrue(checkInterfaceType(interfaceTypes.any, 0))
-//     assert.isTrue(checkInterfaceType(interfaceTypes.any, {}))
-//     assert.isTrue(checkInterfaceType(interfaceTypes.any, checkInterfaceType))
-//   })
-// })
-
 describe('addressWith', () => {
   it('adds a key', () => {
     assert.deepEqual(addressWith([ 'a', 1 ], 'b'), [ 'a', 1, 'b' ])
@@ -367,233 +222,144 @@ describe('addressEqual', () => {
   })
 })
 
-describe('makeTree', () => {
+describe('treeGet', () => {
   it('get traverses arrays and objects', () => {
-    const tree = makeTree({ a: [ 0, { b: 10 } ] }, false)
-    assert.strictEqual(tree.get([ 'a', 1, 'b' ]), 10)
+    const tree = createComponent()()
+    tree.state = { a: [ 0, { b: 10 } ] }
+    assert.strictEqual(treeGet([ 'a', 1, 'b' ], tree), 10)
   })
+})
 
-  it('set sets an object; mutable', () => {
-    const tree = makeTree([ 0, { b: 10 } ], true)
-    const oldTree = tree.get([])
-    const address = [ 1, 'b' ]
-    tree.set(address, 20)
-    assert.strictEqual(tree.get(address), 20)
-    assert.strictEqual(oldTree, tree.get([]))
-  })
-
-  it('set sets an object; mutable top level', () => {
-    const tree = makeTree([ 0, { b: 10 } ], true)
-    tree.set([], 20)
-    assert.strictEqual(tree.get([]), 20)
-  })
-
+describe('treeSet', () => {
   it('set sets an object; immutable', () => {
-    const tree = makeTree([ 0, { b: 10 } ], false)
-    const oldTree = tree.get([])
+    const tree = createComponent()()
+    tree.state =  [ 0, { b: 10 } ]
+    const oldState = tree.state
     const address = [ 1, 'b' ]
-    tree.set(address, 20)
-    assert.strictEqual(tree.get(address), 20)
-    assert.notStrictEqual(oldTree, tree.get([]))
+    treeSet(address, tree, 20)
+    assert.strictEqual(treeGet(address, tree), 20)
+    assert.strictEqual(treeGet(address, oldState), 10)
+    assert.notStrictEqual(tree.state, oldState)
   })
 
   it('set sets an object; immutable in array', () => {
-    const tree = makeTree([ 0, { b: 10 } ], false)
-    const oldTree = tree.get([])
-    tree.set([ 1 ], 20)
-    const newTree = tree.get([])
-    assert.deepEqual(newTree, [ 0, 20 ])
-    assert.notStrictEqual(oldTree, newTree)
-  })
-
-  it('sets signals', () => {
-    // model: { child1: arrayOf(Child1({ model: { a: [ 0, Child2 ] } })) }
-    const signals = makeTree({
-      child1: tagType(
-        NODE,
-        {
-          data: { signals: [] },
-          children: [ { a: [
-            0,
-          ] } ],
-        }
-      ),
-    }, true)
-    const address = [ 'child1', 0, 'a', 1 ]
-    const newSignals = tagType(NODE, { data: { signals: [ TAG ] }, children: [] })
-    signals.set(address, newSignals)
-    assert.strictEqual(signals.get(address), newSignals)
-  })
-
-  it('sets signals at children', () => {
-    // model: { child1: Child1({ model: { child2: DefComponent } }) }
-    const signals = makeTree({
-      child1: tagType(
-        NODE,
-        {
-          data: { signals: [] },
-          children: {
-            child2: tagType(NODE, { data: { signals: [] }, children: null }),
-          },
-        }),
-    }, true)
-    const address = [ 'child1', 'child2' ]
-    const newSignals = tagType(NODE, { data: { signals: [ TAG ] }, children: [] })
-    signals.set(address, newSignals)
-    assert.deepEqual(signals.get(address), newSignals)
+    const tree = createComponent()()
+    tree.state =  [ 0, { b: 10 } ]
+    const oldState = tree.state
+    treeSet([ 1 ], tree, 20)
+    assert.deepEqual(tree.state, [ 0, 20 ])
+    assert.notStrictEqual(tree.state, oldState)
   })
 
   it('traverses arrays, objects, and children', () => {
-    // model: { child1: arrayOf(Child1({ model: { a: [ 0, Child2 ] } })) }
-    const signals = makeTree({
-      child1: tagType(
-        NODE,
-        {
-          data: {
-            signals: [],
-            bindings: [
-              {
-                a: [ null, TAG ],
-              },
-            ],
-          },
-          children: [
-            {
-              a: [
-                0,
-                tagType(
-                  NODE,
-                  {
-                    data: {
-                      signals: [TAG],
-                      bindings: [],
-                    },
-                    children: []
-                  }
-                ),
-              ],
-            },
-          ],
-        }
-      ),
-    }, true)
-    const address = [ 'child1', 0, 'a', 1 ]
-    assert.strictEqual(signals.get(address).data.signals[0], TAG)
+    const Component = createComponent({
+      init: () => ({
+        'a': [
+          (createComponent({
+            init: () => [ 5, [ 10, 20 ] ]
+          }))()
+        ]
+      })
+    })
+    const tree = Component()
+    const oldState = tree.state
+    treeSet([ 'a', 0, 1 ], tree, 30)
+    assert.deepEqual(treeGet([ 'a', 0 ], tree).state, [ 5, 30 ])
+    assert.notStrictEqual(tree.state, oldState)
+  })
+
+  it('allows simple instance cloning', () => {
+    const tree = createComponent()()
+    tree.state = [ 1, [ 2, 3 ] ]
+    // Clone the tree to keep references to the old version
+    const oldTree = { ...tree }
+    treeSet([ 1, 1 ], tree, 4)
+    assert.strictEqual(treeGet([ 1, 1 ], tree), 4)
+    assert.strictEqual(treeGet([ 1, 1 ], oldTree), 3)
   })
 })
 
-describe('checkState', () => {
-  it('does nothing for a valid state object', () => {
-    const Parent = createComponent({
-      init: () => ({ child: DefComponent }),
-    })
-    const model = { a: arrayOf(Parent) }
-    const state = { a: [ { child: { x: 10 } } ] }
-    checkState(model, state)
-  })
-
-  it('checks for invalid state shape -- object', () => {
-    const Parent = createComponent({
-      init: () => ({ child: DefComponent }),
-    })
-    const model = { a: arrayOf(Parent) }
-    const state = { a: [ { child: [ 10 ] } ] }
-    assert.throws(() => {
-      checkState(model, state)
-    }, /Shape of the new state does not match the model/)
-  })
-
-  it('checks for invalid state shape -- array', () => {
-    const model = [ DefComponent ]
-    const state = { b: [ { x: 10 } ] }
-    assert.throws(() => {
-      checkState(model, state)
-    }, /Shape of the new state does not match the model/)
-  })
-
-  it('checks for invalid state shape -- objectOf', () => {
-    const model = { a: objectOf(DefComponent) }
-    const state = { a: [ { x: 10 } ] }
-    assert.throws(() => {
-      checkState(model, state)
-    }, /Shape of the new state does not match the model/)
-  })
-
-  it('checks for invalid state shape -- arrayOf', () => {
-    const model = { a: arrayOf(DefComponent) }
-    const state = { a: { b: { x: 10 } } }
-    assert.throws(() => {
-      checkState(model, state)
-    }, /Shape of the new state does not match the model/)
-  })
-
-  it('allows null -- component', () => {
-    const model = { a: DefComponent }
-    const state = { a: null }
-    checkState(model, state)
-  })
-
-  it('allows null -- objectOf', () => {
-    const model = { a: objectOf(DefComponent) }
-    const state1 = { a: null }
-    checkState(model, state1)
-    const state2 = { a: { b: null, c: { x: 10 } } }
-    checkState(model, state2)
-  })
-
-  it('allows null -- arrayOf', () => {
-    const model = { a: arrayOf(DefComponent) }
-    const state1 = { a: null }
-    checkState(model, state1)
-    const state2 = { a: [ null, { x: 10 } ] }
-    checkState(model, state2)
-  })
-})
-
-describe('diffWithModelMin', () => {
+describe('diffTree', () => {
   it('diffs state by looking at model -- array', () => {
-    const component = createComponent({ init: () => ({ a: [ DefComponent ] }) })
-    const lastState = { a: [ { x: 10 }, { x: 10 } ] }
-    const state = { a: [ lastState.a[0], { x: 10 }, { x: 12 } ] }
-    const { minSignals, minUpdate } = diffWithModelMin(component, state,
-                                                       lastState, [], [])
-    const expect = tagType(NODE, {
+    const Child = createComponent({ init: x => ({ x }) })
+    const Parent = createComponent({
+      init: () => ({ a: [ Child(10), Child(10) ] })
+    })
+    const stateTree = Parent()
+    const lastStateTree = { ...stateTree }
+    stateTree.state = { a: [ lastStateTree.state.a[0], Child(10), Child(12) ] }
+    const diff = diffTree(stateTree, lastStateTree, [])
+    const expect = {
+      type: NODE,
       data: UPDATE,
       children: { a: [
-        tagType(NODE, { data: null,   children: {} }),
-        tagType(NODE, { data: UPDATE, children: {} }),
-        tagType(NODE, { data: CREATE, children: {} }),
+        { type: NODE, data: null,   children: { x: null } },
+        { type: NODE, data: UPDATE, children: { x: null } },
+        { type: NODE, data: CREATE, children: { x: null } },
       ] }
-    })
-    assert.deepEqual(minSignals.diff, expect)
-    assert.deepEqual(minUpdate.diff, expect)
-    assert.deepEqual(minSignals.address, [])
-    assert.deepEqual(minUpdate.address, [])
-    assert.strictEqual(minSignals.modelNode, component)
-    assert.strictEqual(minUpdate.modelNode, component)
+    }
+    assert.deepEqual(diff, expect)
   })
 
   it('diffs state by looking at model -- object nested', () => {
-    const Child = createComponent({ init: () => ({ a: { first: DefComponent } }) })
-    const model = { e: Child }
-    const oldState = { e: { a: { b: { x: 9 },  c: { x: 10 } } } }
-    const newState = { e: { a: { c: { x: 11 }, d: { x: 12 } } } }
-    const { minSignals, minUpdate } = diffWithModelMin(model, newState,
-                                                       oldState, [], [])
-    const expect = { e: tagType(NODE, {
+    // TODO note in docs that components with state that's just a string are not
+    // distinguishable, so they will look like they do not need to update:
+    // const Child = createComponent({ init: x => x })
+    const Child = createComponent({ init: x => ({ x }) })
+    const Parent = createComponent({
+      init: keys => ({ a: fromPairs(keys.map(k => [ k, Child(k) ]))})
+    })
+    const oldState = { e: Parent([ 'b', 'c' ])}
+    const newState = { e: Parent([ 'c', 'd' ])}
+    const diff = diffTree(newState, oldState, [])
+    const expect = { e: {
+      type: NODE,
       data: UPDATE,
       children: { a: {
-        b: tagType(NODE, { data: DESTROY, children: {} }),
-        c: tagType(NODE, { data: UPDATE, children: {} }),
-        d: tagType(NODE, { data: CREATE, children: {} }),
+        b: { type: NODE, data: DESTROY, children: null },
+        c: { type: NODE, data: UPDATE, children: { x: null } },
+        d: { type: NODE, data: CREATE, children: { x: null } },
       } },
-    }) }
-    assert.deepEqual(minSignals.diff, expect)
-    assert.deepEqual(minUpdate.diff, expect)
-    assert.deepEqual(minSignals.address, [])
-    assert.deepEqual(minUpdate.address, [])
-    assert.strictEqual(minSignals.modelNode, model)
-    assert.strictEqual(minUpdate.modelNode, model)
+    }}
+    assert.deepEqual(diff, expect)
+  })
+
+  it('diffs state by looking at model -- old state not an array', () => {
+    const Child = createComponent({ init: x => ({ x }) })
+    const Parent = createComponent({
+      init: () => ({ a: { b: Child(10) } })
+    })
+    const stateTree = Parent()
+    const lastStateTree = { ...stateTree }
+    stateTree.state = { a: [ lastStateTree.state.a.b ] }
+    const diff = diffTree(stateTree, lastStateTree, [])
+    const expect = {
+      type: NODE,
+      data: UPDATE,
+      children: { a: [
+        { type: NODE, data: CREATE, children: { x: null } },
+      ] }
+    }
+    assert.deepEqual(diff, expect)
+  })
+
+  it('diffs state by looking at model -- old state not an object', () => {
+    const Child = createComponent({ init: x => ({ x }) })
+    const Parent = createComponent({
+      init: () => ({ a: [ Child(10) ] })
+    })
+    const stateTree = Parent()
+    const lastStateTree = { ...stateTree }
+    stateTree.state = { a: { b: lastStateTree.state.a[0] } }
+    const diff = diffTree(stateTree, lastStateTree, [])
+    const expect = {
+      type: NODE,
+      data: UPDATE,
+      children: { a: {
+        b: { type: NODE, data: CREATE, children: { x: null } },
+      } }
+    }
+    assert.deepEqual(diff, expect)
   })
 
   it('null means do not draw', () => {
@@ -668,8 +434,7 @@ describe('diffWithModelMin', () => {
 describe('hasChildren', () => {
   it('checks for children', () => {
     assert.isFalse(hasChildren({}))
-    assert.isTrue(hasChildren({ x: DefComponent }))
-    assert.isTrue(hasChildren({ x: arrayOf(DefComponent) }))
+    assert.isTrue(hasChildren({ x: DefComponent() }))
   })
 })
 
@@ -839,25 +604,6 @@ describe('makeOneSignalAPI', () => {
     assert.strictEqual(count, 10)
   })
 
-  it('stores onEach functions for collections', () => {
-    const sig = makeOneSignalAPI(true)
-    let count = 0
-    // key
-    sig.onEach(({ x, k, i }) => {
-      assert.isUndefined(i)
-      count = k + x
-    })
-    sig._onFns[0]('key')({ x: 10 })
-    assert.strictEqual(count, 'key10')
-    // index
-    sig.onEach(({ x, k, i }) => {
-      assert.isUndefined(k)
-      count = i + x
-    })
-    sig._onFns[1](3)({ x: 10 })
-    assert.strictEqual(count, 13)
-  })
-
   it('accepts a new call function', () => {
     const sig = makeOneSignalAPI(false)
     let count = 0
@@ -888,12 +634,12 @@ describe('makeChildSignalsAPI', () => {
       signalNames: [ 'ribose' ],
     })
     const Parent = createComponent({
-      init: () => ({ deoxy: [ HasSignal ] }),
+      init: () => ({ deoxy: [ HasSignal() ] }),
     })
-    const childSignals = makeChildSignalsAPI(Parent.model)
+    const childSignals = makeChildSignalsAPI(Parent().state)
     let watch = ''
-    childSignals.deoxy.ribose.onEach(({ s, i }) => { watch = s + i })
-    childSignals.deoxy.ribose._onFns[0](2)({ s: 'S' })
+    childSignals.deoxy[0].ribose.on(({ s, i }) => { watch = s + i })
+    childSignals.deoxy[0].ribose._onFns[0](2)({ s: 'S' })
     assert.strictEqual(watch, 'S2')
     // TODO allow return values? e.g. for Promises
   })
@@ -902,26 +648,13 @@ describe('makeChildSignalsAPI', () => {
 describe('reduceChildren', () => {
   it('works over nested NODE', () => {
     const obj = {
-      child1: tagType(
-        NODE,
-        {
-          data: 3,
-          children: [
-            {
-              a: [
-                0,
-                tagType(
-                  NODE,
-                  {
-                    data: 2 ,
-                    children: []
-                  }
-                ),
-              ],
-            },
-          ],
-        }
-      ),
+      child1: {
+        type: NODE,
+        data: 3,
+        children: [
+          { a: [ 0, { type: NODE, data: 2, children: [] } ] },
+        ],
+      }
     }
     const fn = (accum, data, address) => accum + data + address[0]
     const res = reduceChildren(obj, fn, 0)
@@ -1349,7 +1082,7 @@ describe('updateDOMElement', () => {
     // Create an element
     const style = { 'border-radius': '10px', 'border-color': 'red' }
     const fn = () => 'abc'
-    render(el, <input disabled onClick={ fn } style={ style } id="a"></input>)
+    renderDOM(el, <input disabled onClick={ fn } style={ style } id="a"></input>)
     const newEl = el.firstChild
     // Update the element
     const newStyle = { 'border-color': 'green' }
@@ -1362,14 +1095,14 @@ describe('updateDOMElement', () => {
   })
 
   it('converts accepts class', () => {
-    render(el, <input></input>)
+    renderDOM(el, <input></input>)
     const newEl = el.firstChild
     updateDOMElement(newEl, <input class="empty"></input>)
     assert.strictEqual(newEl.getAttribute('class'), 'empty')
   })
 
   it('handles special form attributes -- checked', () => {
-    render(el, <input type='checkbox'></input>)
+    renderDOM(el, <input type='checkbox'></input>)
     const newEl = el.firstChild
     assert.isFalse(newEl.hasAttribute('checked'))
     updateDOMElement(newEl, <input checked={ true }></input>)
@@ -1381,7 +1114,7 @@ describe('updateDOMElement', () => {
   it('removes on* functions', () => {
     let called = 0
     const inc = () => called++
-    render(el, <input></input>)
+    renderDOM(el, <input></input>)
     const newEl = el.firstChild
     updateDOMElement(newEl, <input onClick={ inc }></input>)
     updateDOMElement(newEl, <input></input>)
@@ -1393,7 +1126,7 @@ describe('updateDOMElement', () => {
     let called = 0
     const inc1 = () => called++
     const inc2 = () => called++
-    render(el, <input></input>)
+    renderDOM(el, <input></input>)
     const newEl = el.firstChild
     updateDOMElement(newEl, <input onClick={ inc1 }></input>)
     updateDOMElement(newEl, <input onClick={ inc2 }></input>)
@@ -1403,7 +1136,7 @@ describe('updateDOMElement', () => {
 
   it('takes then attribute', (done) => {
     let called = null
-    render(el, <input></input>)
+    renderDOM(el, <input></input>)
     const newEl = el.firstChild
     updateDOMElement(newEl, <input then={ arg => {
       assert.strictEqual(arg, newEl)
@@ -1412,7 +1145,7 @@ describe('updateDOMElement', () => {
   })
 
   it('choose correct namespace -- svg attribute & xlink', () => {
-    render(el, <svg></svg>)
+    renderDOM(el, <svg></svg>)
     const newEl = el.firstChild
     // JSX does not support xlink:href
     updateDOMElement(newEl, createElement('image', {
@@ -1434,16 +1167,16 @@ describe('render', () => {
   })
 
   it('renders empty element', () => {
-    render(el, <div id="new"></div>)
+    renderDOM(el, <div id="new"></div>)
     const newEl = el.firstChild
     assert.strictEqual(newEl.id, 'new')
     assert.strictEqual(newEl.textContent, '')
   })
 
   it('renders text, and casts other objects to String', () => {
-    render(el, <div>hey!, <span>hello</span> world</div>, ':-)')
+    renderDOM(el, <div>hey!, <span>hello</span> world</div>, ':-)')
     // run again to make sure text nodes are updated
-    render(el, <div>hiya!, <span>hello</span>{ 2 }</div>)
+    renderDOM(el, <div>hiya!, <span>hello</span>{ 2 }</div>)
     const nodes = el.firstChild.childNodes
     assert.strictEqual(nodes[0].textContent, 'hiya!, ')
     assert.strictEqual(nodes[1].textContent, 'hello')
@@ -1452,9 +1185,9 @@ describe('render', () => {
   })
 
   it('does not render null', () => {
-    render(el, <div>hey!, <span>hello</span> world</div>, ':-)')
+    renderDOM(el, <div>hey!, <span>hello</span> world</div>, ':-)')
     // run again to make sure text nodes are updated
-    render(el, <div>hiya!, { null }<span>{ null }</span>{ 2 }</div>)
+    renderDOM(el, <div>hiya!, { null }<span>{ null }</span>{ 2 }</div>)
     const nodes = el.firstChild.childNodes
     assert.strictEqual(nodes[0].textContent, 'hiya!, ')
     assert.strictEqual(nodes[1].textContent, '')
@@ -1466,8 +1199,8 @@ describe('render', () => {
     el.appendChild(el1)
     const el2 = document.createElement('div')
     el.appendChild(el2)
-    render(el1, <div>hello</div>, <div><span>world</span><span>!</span></div>)
-    render(el2, <div>hello2</div>, <div><span>world2</span><span>!2</span></div>)
+    renderDOM(el1, <div>hello</div>, <div><span>world</span><span>!</span></div>)
+    renderDOM(el2, <div>hello2</div>, <div><span>world2</span><span>!2</span></div>)
     assert.strictEqual(el1.firstChild.textContent, 'hello')
     assert.strictEqual(el1.lastChild.firstChild.textContent, 'world')
     assert.strictEqual(el1.lastChild.lastChild.textContent, '!')
@@ -1477,21 +1210,21 @@ describe('render', () => {
   })
 
   it('renders nested elements with attributes', () => {
-    render(el, <div><a href="goo.gl">goog</a></div>)
+    renderDOM(el, <div><a href="goo.gl">goog</a></div>)
     const newEl = el.firstChild.firstChild
     assert.strictEqual(newEl.getAttribute('href'), 'goo.gl')
     assert.strictEqual(newEl.textContent, 'goog')
   })
 
   it('rearrange by ID', () => {
-    render(el, <div>
+    renderDOM(el, <div>
            <div id="n1"></div>
            <div id="n2"></div>
            <div id="n3"></div>
            <div id="n4"></div>
            </div>)
     const children = Array.from(el.firstChild.children)
-    render(el, <div>
+    renderDOM(el, <div>
            <div id="n4"></div>
            <div id="n1"></div>
            <div></div>
@@ -1505,20 +1238,20 @@ describe('render', () => {
   })
 
   it('accepts camel-case or css-style CSS keys', () => {
-    render(el, <div style={{ 'border-color': 'red' }}></div>)
+    renderDOM(el, <div style={{ 'border-color': 'red' }}></div>)
     assert.strictEqual(el.firstChild.style.borderColor, 'red')
-    render(el, <div style={{ borderRadius: '2px' }}></div>)
+    renderDOM(el, <div style={{ borderRadius: '2px' }}></div>)
 
     assert.strictEqual(el.firstChild.style.borderRadius, '2px')
   })
 
   it('accepts style string', () => {
-    render(el, <div style="border-color: red;"></div>)
+    renderDOM(el, <div style="border-color: red;"></div>)
     assert.strictEqual(el.firstChild.style.borderColor, 'red')
   })
 
   it('returns a bindings object -- top', () => {
-    const bindings = render(el, bind([ 'a', 'b' ]))
+    const bindings = renderDOM(el, bind([ 'a', 'b' ]))
     const expect = {
       type: BINDINGS,
       data: [ [ [ 'a', 'b' ], el ] ],
@@ -1527,7 +1260,7 @@ describe('render', () => {
   })
 
   it('returns a bindings object -- no array, string', () => {
-    const bindings = render(el, bind('at'))
+    const bindings = renderDOM(el, bind('at'))
     const expect = {
       type: BINDINGS,
       data: [ [ 'at', el ] ],
@@ -1536,7 +1269,7 @@ describe('render', () => {
   })
 
   it('returns a bindings object -- no array, integer', () => {
-    const bindings = render(el, bind(1))
+    const bindings = renderDOM(el, bind(1))
     const expect = {
       type: BINDINGS,
       data: [ [ 1, el ] ],
@@ -1545,7 +1278,7 @@ describe('render', () => {
   })
 
   it('returns a bindings object -- multiple', () => {
-    const bindings = render(
+    const bindings = renderDOM(
       el,
       <div>
         <a href="goo.gl">{ bind([ 'a', 'b' ]) }</a>
@@ -1563,7 +1296,7 @@ describe('render', () => {
   })
 
   it('returns a bindings object -- sibling with auto div', () => {
-    const bindings = render(
+    const bindings = renderDOM(
       el,
       <div>
         <div></div>
@@ -1581,7 +1314,7 @@ describe('render', () => {
   })
 
   it('returns a bindings object -- sibling with auto g', () => {
-    const bindings = render(
+    const bindings = renderDOM(
       el,
       <svg>
         <g></g>
@@ -1602,7 +1335,7 @@ describe('render', () => {
     const nodes = [ 'a', 'b', 'c' ].map((x, i) => {
       return <div id={ x }>{ bind([ i ]) }</div>
     })
-    const bindings = render(el, <div>{ nodes } Tashi</div>)
+    const bindings = renderDOM(el, <div>{ nodes } Tashi</div>)
     assert.strictEqual(el.firstChild.childNodes.length, 4)
     assert.strictEqual(el.firstChild.childNodes[0].id, 'a')
     assert.strictEqual(el.firstChild.childNodes[3].textContent, ' Tashi')
@@ -1611,21 +1344,21 @@ describe('render', () => {
   })
 
   it('adds listeners', (done) => {
-    render(el, <div onClick={ () => done() }></div>)
+    renderDOM(el, <div onClick={ () => done() }></div>)
     mouseClick(el.firstChild)
   })
 
   it('error for invalid listeners', () => {
     assert.throws(() => {
       const methods = {}
-      render(el, <div onClick={ methods.bad }></div>)
+      renderDOM(el, <div onClick={ methods.bad }></div>)
     })
   })
 
   it('removes listeners', () => {
     let clicked = false
-    render(el, <div onClick={ () => clicked = true }></div>)
-    render(el, <div></div>)
+    renderDOM(el, <div onClick={ () => clicked = true }></div>)
+    renderDOM(el, <div></div>)
     mouseClick(el)
     assert.isFalse(clicked)
   })
