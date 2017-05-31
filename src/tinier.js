@@ -1,25 +1,16 @@
 /** @module tinier */
 
 // constants
-export const COMPONENT   = '@TINIER_COMPONENT'
-export const INSTANCE    = '@TINIER_INSTANCE'
-export const ARRAY       = '@TINIER_ARRAY'
-export const OBJECT      = '@TINIER_OBJECT'
-export const NODE        = '@TINIER_NODE'
-export const NULL        = '@TINIER_NULL'
-export const STRING      = '@TINIER_STRING'
-export const NUMBER      = '@TINIER_NUMBER'
-export const BOOLEAN     = '@TINIER_BOOLEAN'
-export const ANY         = '@TINIER_ANY'
-export const NO_ARGUMENT = '@TINIER_NO_ARGUMENT'
-export const TOP         = '@TINIER_TOP'
-export const CREATE      = '@TINIER_CREATE'
-export const UPDATE      = '@TINIER_UPDATE'
-export const DESTROY     = '@TINIER_DESTROY'
-export const BINDING     = '@TINIER_BINDING'
-export const BINDINGS    = '@TINIER_BINDINGS'
-export const ELEMENT     = '@TINIER_ELEMENT'
-const LISTENER_OBJECT    = '@TINIER_LISTENERS'
+const COMPONENT       = '@TINIER_COMPONENT'
+const INSTANCE        = '@TINIER_INSTANCE'
+export const NODE     = '@TINIER_NODE'
+export const CREATE   = '@TINIER_CREATE'
+export const UPDATE   = '@TINIER_UPDATE'
+export const DESTROY  = '@TINIER_DESTROY'
+export const BINDING  = '@TINIER_BINDING'
+export const BINDINGS = '@TINIER_BINDINGS'
+export const ELEMENT  = '@TINIER_ELEMENT'
+const LISTENER_OBJECT = '@TINIER_LISTENERS'
 
 // Basic functions
 export function tail (array) {
@@ -483,25 +474,30 @@ export function treeSet (address, tree, value) {
  * Determine whether to update, create, destroy, or do nothing for a new state
  * and old state. Also run shouldUpdate to potentially ignore the update.
  */
-function computeDiffValue (state, lastState, shouldUpdate, address, trigAddress) {
-  if (state !== null && lastState === null) {
+function computeDiffValue (instance, lastInstance, shouldUpdate, address, trigAddress) {
+  if (instance !== null
+      && (lastInstance === null
+          || !(lastInstance && lastInstance.type === INSTANCE))) {
     return CREATE
-  } else if (state !== null && lastState !== null) {
+  } else if (instance !== null
+             && lastInstance && lastInstance.type === INSTANCE) {
+    const localState = get(instance, 'state')
+    const lastLocalState = get(lastInstance, 'state')
     const shouldUpdateRes = shouldUpdate({
-      state,
-      lastState,
+      state: localState,
+      lastState: lastLocalState,
       componentTriggeredUpdate: addressEqual(address, trigAddress),
     })
-    if (state !== lastState && shouldUpdateRes) {
+    if (localState !== lastLocalState && shouldUpdateRes) {
       return UPDATE
     } else {
       // Do nothing
       return null
     }
-  } else if (state === null && lastState !== null) {
+  } else if (instance === null && lastInstance !== null) {
     return DESTROY
   }
-  // Both old and new state null, then doing nothing
+  // Both old and new instance null, then doing nothing
   return null
 }
 
@@ -517,14 +513,13 @@ export function diffTree (state, lastState, trigAddress, address = []) {
   if ((state && state.type === INSTANCE)
       || (state === null && lastState && lastState.type === INSTANCE)) {
     // For an instance, calculate a diff value
-    const localState = get(state, 'state')
-    const lastLocalState = get(lastState, 'state')
     const shouldUpdate = state !== null
           ? state.component.shouldUpdate
           : null
-    const data = computeDiffValue(localState, lastLocalState, shouldUpdate,
+    const data = computeDiffValue(state, lastState, shouldUpdate,
                                   address, trigAddress)
-    const children = diffTree(localState, lastLocalState, trigAddress, address)
+    const children = diffTree(get(state, 'state'), get(lastState, 'state'),
+                              trigAddress, address)
     return { type: NODE, data, children }
   } else if (isArray(state)) {
     // For array, get the longest array and diff based on that. Deal with the
@@ -973,7 +968,7 @@ export function run (instance, appEl, opts = {}) {
 
   // First draw
   const diff = diffTree(stateTree, null, [])
-  updateComponents(stateTree, diff, stateCallers, opts, { [TOP]: appEl }, [ TOP ])
+  updateComponents(stateTree, diff, stateCallers, opts)
 
   // Return API
   const state = stateTree

@@ -6,14 +6,14 @@ const { createComponent, run, bind, createElement, renderDOM } = tinier
 
 // Private API
 import {
-  COMPONENT, ARRAY, OBJECT, NODE, NULL, TOP, CREATE, UPDATE, DESTROY, noop,
-  tail, head, fromPairs, get, isUndefined, isObject, isArray, isFunction,
-  mapValues, reduceValues, zipArrays, zipObjects, filterValues, any, tagType,
-  checkType, match, hasChildren, makeBindingKey, processBindings, updateEl,
-  addressWith, addressEqual, diffTree, treeGet, treeSet,
-  makeSignal, makeOneSignalAPI, makeChildSignalsAPI, reduceChildren,
-  mergeSignals, makeCallMethod, makeCallSignal, makeCallReducer, ELEMENT,
-  BINDING, BINDINGS, createDOMElement, getStyles, updateDOMElement,
+  NODE, CREATE, UPDATE, DESTROY, ELEMENT, BINDING, BINDINGS, tail, head,
+  fromPairs, get, isUndefined, isObject, isArray, isFunction, mapValues,
+  reduceValues, zipArrays, zipObjects, filterValues, any, tagType, checkType,
+  match, hasChildren, makeBindingKey, processBindings, updateEl, addressWith,
+  addressEqual, diffTree, treeGet, treeSet, makeSignal, makeOneSignalAPI,
+  makeChildSignalsAPI, reduceChildren, mergeSignals, makeCallMethod,
+  makeCallSignal, makeCallReducer, createDOMElement, getStyles,
+  updateDOMElement,
 } from './tinier'
 
 // Testing functions
@@ -280,7 +280,7 @@ describe('treeSet', () => {
 })
 
 describe('diffTree', () => {
-  it('diffs state by looking at model -- array', () => {
+  it('diffs state -- array', () => {
     const Child = createComponent({ init: x => ({ x }) })
     const Parent = createComponent({
       init: () => ({ a: [ Child(10), Child(10) ] })
@@ -301,7 +301,7 @@ describe('diffTree', () => {
     assert.deepEqual(diff, expect)
   })
 
-  it('diffs state by looking at model -- object nested', () => {
+  it('diffs state -- object nested', () => {
     // TODO note in docs that components with state that's just a string are not
     // distinguishable, so they will look like they do not need to update:
     // const Child = createComponent({ init: x => x })
@@ -324,7 +324,7 @@ describe('diffTree', () => {
     assert.deepEqual(diff, expect)
   })
 
-  it('diffs state by looking at model -- old state not an array', () => {
+  it('diffs state -- old state not an array', () => {
     const Child = createComponent({ init: x => ({ x }) })
     const Parent = createComponent({
       init: () => ({ a: { b: Child(10) } })
@@ -343,7 +343,7 @@ describe('diffTree', () => {
     assert.deepEqual(diff, expect)
   })
 
-  it('diffs state by looking at model -- old state not an object', () => {
+  it('diffs state -- old state not an object', () => {
     const Child = createComponent({ init: x => ({ x }) })
     const Parent = createComponent({
       init: () => ({ a: [ Child(10) ] })
@@ -362,68 +362,28 @@ describe('diffTree', () => {
     assert.deepEqual(diff, expect)
   })
 
-  it('null means do not draw', () => {
-    const model = { a: [ DefComponent, DefComponent ], b: [ DefComponent ] }
-    const oldState = { a: [ { x: 10 }, { x: 12 } ], b: null }
-    const newState = { a: [ { x: 11 }, null ], b: null }
-    const { minSignals, minUpdate } = diffWithModelMin(model, newState,
-                                                       oldState, [], [])
+  it('null, string, and integer data OK', () => {
+    const Component = createComponent({ init: x => x})
+    const oldState = { a: [ Component(10), Component('hi') ] }
+    const newState = { a: [ Component(10) ], b: Component(null) }
+    const diff = diffTree(newState, oldState, [])
     const expect = {
       a: [
-        tagType(NODE,  {data: UPDATE, children: {} }),
-        tagType(NODE, { data: DESTROY, children: {} }),
+        { type: NODE, data: null, children: null },
+        { type: NODE, data: DESTROY, children: null },
       ],
-      b: [
-        tagType(NODE, { data: null, children: {} }),
-      ]
+      b: { type: NODE, data: CREATE, children: null },
     }
-    assert.deepEqual(minSignals.diff, expect)
-    assert.deepEqual(minUpdate.diff, expect)
+    assert.deepEqual(diff, expect)
   })
 
   it('absent means do not draw', () => {
-    const model = { a: { b: DefComponent } }
-    const oldState = { a: { b: 10 } }
+    const Component = createComponent({ init: x => x })
+    const oldState = { a: { b: Component(10) } }
     const newState = { a: { } }
-    const { minSignals, minUpdate } = diffWithModelMin(model, newState,
-                                                       oldState, [], [])
-    const expect = { a: {
-      b: tagType(NODE, { data: DESTROY, children: {} }),
-    } }
-    assert.deepEqual(minSignals.diff, expect)
-    assert.deepEqual(minUpdate.diff, expect)
-  })
-
-  it('accepts null for old state', () => {
-    const model = { a: arrayOf(DefComponent) }
-    const oldState = null
-    const newState = { a: [ { x: 11 }, {} ] }
-    const { minSignals, minUpdate } = diffWithModelMin(model, newState,
-                                                       oldState, [], [])
-    const expect = { a: [
-      tagType(NODE, { data: CREATE, children: {} }),
-      tagType(NODE, { data: CREATE, children: {} }),
-    ] }
-    assert.deepEqual(minSignals.diff, expect)
-    assert.deepEqual(minUpdate.diff, expect)
-  })
-
-  it('accepts null for old state 2', () => {
-    const component = createComponent({
-      init: () => ({ child: DefComponent })
-    })
-    const oldState = null
-    const newState = { child: { val: 1 } }
-    const { minSignals, minUpdate } = diffWithModelMin(component, newState,
-                                                       oldState, [], [])
-    const expect = tagType(NODE, {
-      data: CREATE,
-      children: {
-        child: tagType(NODE, { data: CREATE, children: {} }),
-      },
-    })
-    assert.deepEqual(minSignals.diff, expect)
-    assert.deepEqual(minUpdate.diff, expect)
+    const diff = diffTree(newState, oldState, [])
+    const expect = { a: { b: { type: NODE, data: DESTROY, children: null } } }
+    assert.deepEqual(diff, expect)
   })
 })
 
@@ -467,119 +427,71 @@ describe('processBindings', () => {
     const renderResult = processBindings(bindings, model, state)
     assert.deepEqual(renderResult, { a: EL1, 'a,b,3': EL2 })
   })
-
-  // TODO move these checks downstream to consuming the bindings
-
-  // it('errors if bindings shape does not match', () => {
-  //   assert.throws(() => {
-  //     const model = { a: arrayOf(DefComponent) }
-  //     const state = { a: [ { x: 10 } ] }
-  //     const bindings = { type: BINDINGS, data: [ [ 'a', EL1 ] ] }
-  //     processBindings(bindings, model, state)
-  //   }, /Bindings do not match the model/)
-  // })
-
-  // it('errors if bindings shape does not match -- arrayOf', () => {
-  //   assert.throws(() => {
-  //     const model = { a: arrayOf(DefComponent) }
-  //     const state = { a: [ { x: 10 } ] }
-  //     const bindings = { type: BINDINGS, data: [ [ 'a', EL1 ] ] }
-  //     processBindings(bindings, model, state)
-  //   }, /Bindings do not match the model/)
-  // })
-
-  // it('errors if bindings shape does not match -- extra array elements', () => {
-  //   assert.throws(() => {
-  //     const model = { a: arrayOf(DefComponent) }
-  //     const state = { a: [ { x: 10 } ] }
-  //     const bindings = {
-  //       type: BINDINGS,
-  //       data: [ [ [ 'a', 0 ], EL1 ], [ [ 'a', 1 ], EL2 ] ],
-  //     }
-  //     processBindings(bindings, model, state)
-  //   }, /Bindings do not match the model/)
-  // })
-
-  // it('errors if bindings shape does not match -- extra attributes', () => {
-  //   assert.throws(() => {
-  //     const model = { a: objectOf(DefComponent) }
-  //     const state = { a: { b: { x: 10 } } }
-  //     const bindings = {
-  //       type: BINDINGS,
-  //       data: [ [ [ 'a', 'b' ], EL1 ], [ [ 'a', 'c' ], EL2 ] ],
-  //     }
-  //     processBindings(bindings, model, state)
-  //   }, /Bindings do not match the model/)
-  // })
 })
 
 describe('updateEl', () => {
   it('returns null if DESTROY', () => {
     const diffVal = DESTROY
-    const { renderResult } = updateEl([], DefComponent, {}, diffVal, EL1,
-                                      EL1, defStateCallers, {})
+    const renderResult = updateEl([], DefComponent(), diffVal, EL1,
+                                  defStateCallers, {})
     assert.isNull(renderResult)
   })
 
   it('returns binding', () => {
-    const component = createComponent({
-      init: () => ({ c: DefComponent }),
+    const Component = createComponent({
+      init: () => ({ c: DefComponent() }),
       render: ({ el }) => ({ type: BINDINGS, data: [ [ 'c', el ] ] }),
     })
-    const state = { c: {} }
     const diffVal = UPDATE
-    const { renderResult } = updateEl([], component, state, diffVal, EL1, EL1,
-                                      defStateCallers, {})
+    const renderResult = updateEl([], Component(), diffVal, EL1,
+                                  defStateCallers, {})
     assert.deepEqual(renderResult, { c: EL1 })
   })
 
   it('accepts null for tinierState', () => {
-    const component = createComponent({
-      init: () => ({ c: DefComponent }),
+    const Component = createComponent({
+      init: () => ({ c: DefComponent() }),
       render: ({ el }) => ({ type: BINDINGS, data: [ [ 'c', el ] ] }),
     })
-    const state = { c: {} }
     const diffVal = CREATE
-    const { renderResult } = updateEl([], component, state, diffVal, EL1, EL1,
+    const renderResult = updateEl([], Component(), diffVal, EL1,
                                       defStateCallers, {})
     assert.deepEqual(renderResult, { c: EL1 })
   })
 
   it('updates with new el', () => {
-    const component = createComponent({
+    const Component = createComponent({
       render: ({ el }) => ({ type: BINDINGS, data: [ [ 'a', el ] ] }),
     })
-    const state = { c: {} }
-    const diffVal = UPDATE
-    const { renderResult, lastRenderedEl } = updateEl([], component, state,
-                                                      diffVal, EL1, EL2,
-                                                      defStateCallers, {})
+    const component = Component()
+    component.lastRenderedEl = EL1
+    const diffVal = null
+    const renderResult = updateEl([], component, diffVal, EL2,
+                                  defStateCallers, {})
     assert.deepEqual(renderResult, { a: EL2 })
-    assert.strictEqual(lastRenderedEl, EL2)
+    assert.strictEqual(component.lastRenderedEl, EL1)
   })
 
   it('old el can be null', () => {
-    const component = createComponent({
+    const Component = createComponent({
       render: ({ el }) => ({ type: BINDINGS, data: [ [ 'a', el ] ] }),
     })
-    const state = { c: {} }
     const diffVal = UPDATE
-    const { renderResult, lastRenderedEl } = updateEl([], component, state,
-                                                      diffVal, null, EL1,
-                                                      defStateCallers, {})
+    const renderResult = updateEl([], Component(), diffVal, EL1,
+                                  defStateCallers, {})
     assert.deepEqual(renderResult, { a: EL1 })
-    assert.strictEqual(lastRenderedEl, EL1)
   })
 
   it('does not call shouldUpdate', () => {
-    const component = createComponent({
+    const Component = createComponent({
       render: ({ el }) => 'BAD',
       shouldUpdate: () => { throw new Error('NOPE') },
     })
-    const state = { c: {} }
+    const component = Component()
+    component.lastRenderedEl = EL1
     const diffVal = null
-    const { renderResult } = updateEl([], component, state, diffVal, EL1, EL1,
-                                      defStateCallers, {})
+    const renderResult = updateEl([], component, diffVal, EL1,
+                                  defStateCallers, {})
     assert.isNull(renderResult)
   })
 })
